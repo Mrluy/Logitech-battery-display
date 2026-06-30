@@ -79,7 +79,13 @@ internal sealed class TaskbarBatteryForm : Form
             return;
         }
 
-        const int reservedRightForTray = 150;
+        if (TryGetTaskListBounds(out var taskList) && taskList.Width > Width && taskList.Height > 0)
+        {
+            Location = GetTaskListLocation(taskList, taskbar);
+            return;
+        }
+
+        const int reservedRightForTray = 520;
         const int margin = 12;
         if (taskbar.Height <= taskbar.Width)
         {
@@ -96,6 +102,21 @@ internal sealed class TaskbarBatteryForm : Form
         Location = new Point(
             taskbar.Left + Math.Max(0, (taskbar.Width - Width) / 2),
             taskbar.Bottom - Height - reservedRightForTray);
+    }
+
+    private Point GetTaskListLocation(Rectangle taskList, Rectangle taskbar)
+    {
+        const int margin = 14;
+        if (taskbar.Height <= taskbar.Width)
+        {
+            return new Point(
+                taskList.Right - Width - margin,
+                taskList.Top + Math.Max(0, (taskList.Height - Height) / 2));
+        }
+
+        return new Point(
+            taskList.Left + Math.Max(0, (taskList.Width - Width) / 2),
+            taskList.Bottom - Height - margin);
     }
 
     protected override void OnPaintBackground(PaintEventArgs e)
@@ -174,6 +195,47 @@ internal sealed class TaskbarBatteryForm : Form
         return Rectangle.Empty;
     }
 
+    private static bool TryGetTaskListBounds(out Rectangle bounds)
+    {
+        bounds = Rectangle.Empty;
+        var taskbar = FindWindow("Shell_TrayWnd", null);
+        if (taskbar == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        var taskList = IntPtr.Zero;
+        EnumChildWindows(
+            taskbar,
+            (hWnd, _) =>
+            {
+                var className = GetWindowClassName(hWnd);
+                if (className is "MSTaskListWClass" or "MSTaskSwWClass")
+                {
+                    taskList = hWnd;
+                    return false;
+                }
+
+                return true;
+            },
+            IntPtr.Zero);
+
+        if (taskList == IntPtr.Zero || !GetWindowRect(taskList, out var rect))
+        {
+            return false;
+        }
+
+        bounds = Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+        return bounds.Width > 0 && bounds.Height > 0;
+    }
+
+    private static string GetWindowClassName(IntPtr hWnd)
+    {
+        var buffer = new System.Text.StringBuilder(256);
+        var length = GetClassName(hWnd, buffer, buffer.Capacity);
+        return length <= 0 ? string.Empty : buffer.ToString();
+    }
+
     private static void DrawBattery(Graphics graphics, Rectangle bounds, int? percent, Color accent)
     {
         using var outline = new Pen(Color.FromArgb(225, 238, 244, 247), 2F);
@@ -226,5 +288,28 @@ internal sealed class TaskbarBatteryForm : Form
             <= 35 => Color.FromArgb(255, 176, 73),
             _ => Color.FromArgb(45, 214, 129)
         };
+    }
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindow(string lpClassName, string? lpWindowName);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out NativeRect lpRect);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly struct NativeRect
+    {
+        public readonly int Left;
+        public readonly int Top;
+        public readonly int Right;
+        public readonly int Bottom;
     }
 }
