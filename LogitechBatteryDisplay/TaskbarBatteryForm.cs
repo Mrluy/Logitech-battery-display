@@ -106,7 +106,7 @@ internal sealed class TaskbarBatteryForm : Form
 
     private Point GetTaskListLocation(Rectangle taskList, Rectangle taskbar)
     {
-        const int horizontalRightGap = 36;
+        const int horizontalRightGap = 24;
         const int verticalBottomGap = 14;
         if (taskbar.Height <= taskbar.Width)
         {
