@@ -16,14 +16,14 @@ internal sealed class TaskbarBatteryForm : Form
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
         TopMost = true;
-        Width = 148;
+        Width = 120;
         Height = 34;
         MinimumSize = Size;
         MaximumSize = Size;
         BackColor = Transparent;
         TransparencyKey = Transparent;
         DoubleBuffered = true;
-        Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Bold, GraphicsUnit.Point);
+        Font = new Font("Microsoft YaHei UI", 9.5F, FontStyle.Bold, GraphicsUnit.Point);
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
 
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
@@ -127,23 +127,14 @@ internal sealed class TaskbarBatteryForm : Form
     protected override void OnPaint(PaintEventArgs e)
     {
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        e.Graphics.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
+        e.Graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
         e.Graphics.Clear(Transparent);
 
         var percent = _snapshot.Percent;
         var accent = AccentFor(percent, _snapshot.ChargeState);
         var percentText = percent is int value ? $"{value}%" : "--%";
 
-        using var textBrush = new SolidBrush(accent);
-        TextRenderer.DrawText(
-            e.Graphics,
-            percentText,
-            Font,
-            new Rectangle(0, 3, 54, Height - 6),
-            accent,
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-
-        DrawBattery(e.Graphics, new Rectangle(62, 7, 74, 20), percent, accent);
+        DrawBattery(e.Graphics, new Rectangle(5, 5, 106, 24), percent, accent, percentText, Font);
     }
 
     protected override void Dispose(bool disposing)
@@ -236,7 +227,7 @@ internal sealed class TaskbarBatteryForm : Form
         return length <= 0 ? string.Empty : buffer.ToString();
     }
 
-    private static void DrawBattery(Graphics graphics, Rectangle bounds, int? percent, Color accent)
+    private static void DrawBattery(Graphics graphics, Rectangle bounds, int? percent, Color accent, string percentText, Font font)
     {
         using var outline = new Pen(Color.FromArgb(225, 238, 244, 247), 2F);
         using var cap = new SolidBrush(Color.FromArgb(225, 238, 244, 247));
@@ -252,6 +243,28 @@ internal sealed class TaskbarBatteryForm : Form
             using var fillPath = RoundedRect(inner, 3);
             graphics.FillPath(fill, fillPath);
         }
+
+        DrawCenteredPercent(graphics, bounds, percentText, font);
+    }
+
+    private static void DrawCenteredPercent(Graphics graphics, Rectangle bounds, string text, Font font)
+    {
+        using var path = new GraphicsPath();
+        using var format = new StringFormat
+        {
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Center,
+            FormatFlags = StringFormatFlags.NoClip
+        };
+        path.AddString(text, font.FontFamily, (int)font.Style, graphics.DpiY * font.SizeInPoints / 72F, bounds, format);
+
+        using var halo = new Pen(Color.FromArgb(205, 4, 10, 14), 2.4F)
+        {
+            LineJoin = LineJoin.Round
+        };
+        using var fill = new SolidBrush(Color.FromArgb(248, 255, 255, 255));
+        graphics.DrawPath(halo, path);
+        graphics.FillPath(fill, path);
     }
 
     private static GraphicsPath RoundedRect(Rectangle bounds, int radius)
