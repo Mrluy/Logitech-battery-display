@@ -366,7 +366,13 @@ internal sealed class BatteryStatusForm : Form
 
         public BatteryGauge()
         {
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.OptimizedDoubleBuffer |
+                ControlStyles.SupportsTransparentBackColor |
+                ControlStyles.UserPaint,
+                true);
+            BackColor = Color.Transparent;
         }
 
         public void UpdateSnapshot(BatterySnapshot snapshot)
@@ -381,6 +387,28 @@ internal sealed class BatteryStatusForm : Form
             var percent = _snapshot.Percent;
             var accent = Palette.AccentFor(percent, _snapshot.ChargeState);
             DrawBattery(e.Graphics, new Rectangle(4, 13, 136, 52), percent, accent);
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            if (Parent is null)
+            {
+                base.OnPaintBackground(e);
+                return;
+            }
+
+            var state = e.Graphics.Save();
+            try
+            {
+                e.Graphics.TranslateTransform(-Left, -Top);
+                using var parentPaint = new PaintEventArgs(e.Graphics, new Rectangle(Left, Top, Width, Height));
+                InvokePaintBackground(Parent, parentPaint);
+                InvokePaint(Parent, parentPaint);
+            }
+            finally
+            {
+                e.Graphics.Restore(state);
+            }
         }
 
         private static void DrawBattery(Graphics graphics, Rectangle bounds, int? percent, Color accent)
