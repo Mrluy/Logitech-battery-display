@@ -16,14 +16,14 @@ internal sealed class TaskbarBatteryForm : Form
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
         TopMost = true;
-        Width = 120;
+        Width = 60;
         Height = 34;
         MinimumSize = Size;
         MaximumSize = Size;
         BackColor = Transparent;
         TransparencyKey = Transparent;
         DoubleBuffered = true;
-        Font = new Font("Microsoft YaHei UI", 9.5F, FontStyle.Bold, GraphicsUnit.Point);
+        Font = new Font("Microsoft YaHei UI", 8.4F, FontStyle.Bold, GraphicsUnit.Point);
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
 
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
@@ -134,7 +134,7 @@ internal sealed class TaskbarBatteryForm : Form
         var accent = AccentFor(percent, _snapshot.ChargeState);
         var percentText = percent is int value ? $"{value}%" : "--%";
 
-        DrawBattery(e.Graphics, new Rectangle(5, 5, 106, 24), percent, accent, percentText, Font);
+        DrawBattery(e.Graphics, new Rectangle(3, 7, 49, 20), percent, accent, percentText, Font);
     }
 
     protected override void Dispose(bool disposing)
@@ -229,18 +229,18 @@ internal sealed class TaskbarBatteryForm : Form
 
     private static void DrawBattery(Graphics graphics, Rectangle bounds, int? percent, Color accent, string percentText, Font font)
     {
-        using var outline = new Pen(Color.FromArgb(225, 238, 244, 247), 2F);
+        using var outline = new Pen(Color.FromArgb(225, 238, 244, 247), 1.8F);
         using var cap = new SolidBrush(Color.FromArgb(225, 238, 244, 247));
-        using var body = RoundedRect(bounds, 5);
+        using var body = RoundedRect(bounds, 4);
         graphics.DrawPath(outline, body);
-        graphics.FillRectangle(cap, new Rectangle(bounds.Right + 3, bounds.Top + 6, 5, 8));
+        graphics.FillRectangle(cap, new Rectangle(bounds.Right + 2, bounds.Top + 6, 4, 8));
 
-        var inner = Rectangle.Inflate(bounds, -5, -5);
+        var inner = Rectangle.Inflate(bounds, -4, -4);
         if (percent is int value)
         {
             inner.Width = Math.Max(2, (int)Math.Round(inner.Width * value / 100.0));
             using var fill = new SolidBrush(accent);
-            using var fillPath = RoundedRect(inner, 3);
+            using var fillPath = RoundedRect(inner, 2);
             graphics.FillPath(fill, fillPath);
         }
 
@@ -256,15 +256,44 @@ internal sealed class TaskbarBatteryForm : Form
             LineAlignment = StringAlignment.Center,
             FormatFlags = StringFormatFlags.NoClip
         };
-        path.AddString(text, font.FontFamily, (int)font.Style, graphics.DpiY * font.SizeInPoints / 72F, bounds, format);
+        using var fittedFont = CreateFittedPercentFont(graphics, bounds, text, font);
+        var textBounds = Rectangle.Inflate(bounds, -3, 0);
+        path.AddString(
+            text,
+            fittedFont.FontFamily,
+            (int)fittedFont.Style,
+            graphics.DpiY * fittedFont.SizeInPoints / 72F,
+            textBounds,
+            format);
 
-        using var halo = new Pen(Color.FromArgb(205, 4, 10, 14), 2.4F)
+        using var halo = new Pen(Color.FromArgb(210, 4, 10, 14), 1.8F)
         {
             LineJoin = LineJoin.Round
         };
         using var fill = new SolidBrush(Color.FromArgb(248, 255, 255, 255));
         graphics.DrawPath(halo, path);
         graphics.FillPath(fill, path);
+    }
+
+    private static Font CreateFittedPercentFont(Graphics graphics, Rectangle bounds, string text, Font baseFont)
+    {
+        const float minimumSize = 6.8F;
+        var maximumSize = Math.Min(baseFont.SizeInPoints, 8.4F);
+        var targetSize = minimumSize;
+        using var format = StringFormat.GenericTypographic;
+
+        for (var size = maximumSize; size >= minimumSize; size -= 0.2F)
+        {
+            using var candidate = new Font(baseFont.FontFamily, size, baseFont.Style, GraphicsUnit.Point);
+            var measured = graphics.MeasureString(text, candidate, bounds.Size, format);
+            if (measured.Width <= bounds.Width - 7 && measured.Height <= bounds.Height - 2)
+            {
+                targetSize = size;
+                break;
+            }
+        }
+
+        return new Font(baseFont.FontFamily, targetSize, baseFont.Style, GraphicsUnit.Point);
     }
 
     private static GraphicsPath RoundedRect(Rectangle bounds, int radius)
