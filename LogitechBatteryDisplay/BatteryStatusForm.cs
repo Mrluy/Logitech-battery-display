@@ -25,7 +25,7 @@ internal sealed class BatteryStatusForm : Form
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         Width = 392;
-        Height = 268;
+        Height = 248;
         MinimumSize = Size;
         MaximumSize = Size;
         DoubleBuffered = true;
@@ -104,7 +104,7 @@ internal sealed class BatteryStatusForm : Form
         using var dot = new SolidBrush(Palette.AccentFor(_snapshot.Percent, _snapshot.ChargeState));
         e.Graphics.FillEllipse(dot, 22, 25, 8, 8);
 
-        DrawInfoPanel(e.Graphics, new Rectangle(22, 210, 328, 38));
+        DrawInfoPanel(e.Graphics, new Rectangle(22, 190, 328, 38));
     }
 
     protected override void OnResize(EventArgs e)
@@ -163,6 +163,7 @@ internal sealed class BatteryStatusForm : Form
 
         _percent.Font = new Font(Font.FontFamily, 42F, FontStyle.Bold);
         _percent.BackColor = Color.Transparent;
+        _percent.TextAlign = ContentAlignment.MiddleLeft;
 
         _updatedLabel.Text = "更新";
         foreach (var label in new[] { _updatedLabel })
@@ -199,18 +200,18 @@ internal sealed class BatteryStatusForm : Form
         _device.Location = new Point(22, 47);
         _device.Size = new Size(252, 22);
 
-        _percent.Location = new Point(22, 96);
-        _percent.Size = new Size(172, 76);
+        _percent.Location = new Point(24, 74);
+        _percent.Size = new Size(160, 76);
 
-        _statusChip.Location = new Point(27, 176);
+        _statusChip.Location = new Point(31, 154);
         _statusChip.Size = new Size(76, 26);
 
-        _gauge.Location = new Point(204, 105);
+        _gauge.Location = new Point(196, 73);
         _gauge.Size = new Size(154, 80);
 
-        _updatedLabel.Location = new Point(38, 218);
+        _updatedLabel.Location = new Point(38, 198);
         _updatedLabel.Size = new Size(60, 18);
-        _updatedValue.Location = new Point(95, 218);
+        _updatedValue.Location = new Point(95, 198);
         _updatedValue.Size = new Size(232, 18);
     }
 
