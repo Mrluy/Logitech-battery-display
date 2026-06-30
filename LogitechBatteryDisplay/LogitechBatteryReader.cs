@@ -377,12 +377,25 @@ internal sealed class LogitechBatteryReader
             }
 
             var name = Encoding.UTF8.GetString(bytes.ToArray()).Trim('\0', ' ');
-            return string.IsNullOrWhiteSpace(name) ? null : name;
+            return string.IsNullOrWhiteSpace(name) ? null : NormalizeDeviceName(name);
         }
         catch
         {
             return null;
         }
+    }
+
+    private static string NormalizeDeviceName(string name)
+    {
+        var normalized = string.Join(' ', name.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+        if (normalized.Equals("502", StringComparison.OrdinalIgnoreCase) ||
+            normalized.StartsWith("502 ", StringComparison.OrdinalIgnoreCase) ||
+            normalized.StartsWith("502X", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"G{normalized}";
+        }
+
+        return normalized;
     }
 
     private static byte[] ToBigEndian(int value) => [(byte)(value >> 8), (byte)value];
