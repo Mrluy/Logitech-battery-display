@@ -56,10 +56,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _taskbarBatteryForm = new TaskbarBatteryForm();
         _taskbarBatteryForm.SetTargetScreen(_settings.TaskbarBatteryScreenDeviceName);
         _taskbarBatteryForm.UpdateSnapshot(_latest);
-        if (_settings.ShowTaskbarBattery)
-        {
-            _taskbarBatteryForm.ShowPinned();
-        }
 
         _notifyIcon = new NotifyIcon
         {
@@ -69,6 +65,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
             ContextMenuStrip = BuildMenu()
         };
         _notifyIcon.DoubleClick += (_, _) => ShowStatusWindow();
+
+        if (_settings.ShowTaskbarBattery)
+        {
+            _taskbarBatteryForm.ShowPinned();
+        }
 
         _timer = new System.Windows.Forms.Timer
         {
