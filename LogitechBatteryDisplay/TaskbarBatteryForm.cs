@@ -106,17 +106,18 @@ internal sealed class TaskbarBatteryForm : Form
 
     private Point GetTaskListLocation(Rectangle taskList, Rectangle taskbar)
     {
-        const int margin = 14;
+        const int horizontalRightGap = 36;
+        const int verticalBottomGap = 14;
         if (taskbar.Height <= taskbar.Width)
         {
             return new Point(
-                taskList.Right - Width - margin,
+                taskList.Right - Width - horizontalRightGap,
                 taskList.Top + Math.Max(0, (taskList.Height - Height) / 2));
         }
 
         return new Point(
             taskList.Left + Math.Max(0, (taskList.Width - Width) / 2),
-            taskList.Bottom - Height - margin);
+            taskList.Bottom - Height - verticalBottomGap);
     }
 
     protected override void OnPaintBackground(PaintEventArgs e)
