@@ -1,0 +1,29 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Mouse Battery App Icon</title>
+  <desc id="desc">A flat minimalist software icon combining a computer mouse silhouette with a battery level indicator.</desc>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="112" fill="#0F172A"/>
+  <circle cx="398" cy="116" r="48" fill="#22C55E" opacity="0.12"/>
+  <circle cx="132" cy="404" r="36" fill="#38BDF8" opacity="0.10"/>
+
+  <!-- Mouse body -->
+  <path d="M256 74C192 74 146 127 146 200V292C146 378 190 438 256 438C322 438 366 378 366 292V200C366 127 320 74 256 74Z" fill="#F8FAFC"/>
+
+  <!-- Subtle left highlight for flat depth -->
+  <path d="M256 74C192 74 146 127 146 200V292C146 378 190 438 256 438V74Z" fill="#E2E8F0" opacity="0.48"/>
+
+  <!-- Center seam and scroll wheel -->
+  <path d="M256 91V205" stroke="#CBD5E1" stroke-width="8" stroke-linecap="round"/>
+  <rect x="242" y="116" width="28" height="72" rx="14" fill="#0F172A"/>
+  <rect x="250" y="128" width="12" height="34" rx="6" fill="#22C55E"/>
+
+  <!-- Battery indicator embedded in mouse -->
+  <g>
+    <rect x="198" y="306" width="112" height="52" rx="16" fill="#0F172A"/>
+    <rect x="309" y="322" width="14" height="20" rx="5" fill="#0F172A"/>
+    <rect x="214" y="321" width="22" height="22" rx="6" fill="#22C55E"/>
+    <rect x="243" y="321" width="22" height="22" rx="6" fill="#22C55E"/>
+    <rect x="272" y="321" width="22" height="22" rx="6" fill="#22C55E"/>
+  </g>
+</svg>

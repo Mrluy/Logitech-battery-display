@@ -1,0 +1,18 @@
+# Build output
+**/bin/
+**/obj/
+/publish/
+
+# Local packaged executables and diagnostics
+/罗技鼠标电量显示.exe
+**/probe-result.txt
+
+# User/local IDE state
+*.user
+.vs/
+
+# Temporary icon-rendering helper files
+/package.json
+/package-lock.json
+/node_modules/
+/LogitechBatteryDisplay/Assets/AppIcon.png
