@@ -5,16 +5,23 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly LogitechBatteryReader _reader = new();
     private readonly NotifyIcon _notifyIcon;
     private readonly BatteryStatusForm _form;
+    private readonly TaskbarBatteryForm _taskbarBatteryForm;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly Icon _trayIcon;
     private readonly Icon _windowIcon;
     private readonly EventWaitHandle _showWindowEvent;
     private readonly RegisteredWaitHandle _showWindowRegistration;
+    private readonly AppSettings _settings;
+    private ToolStripMenuItem? _taskbarBatteryMenuItem;
+    private ToolStripMenuItem? _startupMenuItem;
     private bool _isRefreshing;
     private BatterySnapshot _latest = BatterySnapshot.Error("正在读取鼠标电量...");
 
     public TrayApplicationContext(bool showOnStart = false)
     {
+        _settings = AppSettings.Load();
+        _settings.StartWithWindows = StartupManager.IsEnabled(Application.ExecutablePath);
+
         _trayIcon = LoadApplicationIcon();
         _windowIcon = (Icon)_trayIcon.Clone();
 
@@ -45,6 +52,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
             -1,
             false);
 
+        _taskbarBatteryForm = new TaskbarBatteryForm();
+        _taskbarBatteryForm.UpdateSnapshot(_latest);
+        if (_settings.ShowTaskbarBattery)
+        {
+            _taskbarBatteryForm.ShowPinned();
+        }
+
         _notifyIcon = new NotifyIcon
         {
             Text = "罗技鼠标电量",
@@ -73,6 +87,22 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.Add("显示状态", null, (_, _) => ShowStatusWindow());
         menu.Items.Add("立即刷新", null, async (_, _) => await RefreshAsync());
+        menu.Items.Add(new ToolStripSeparator());
+
+        _taskbarBatteryMenuItem = new ToolStripMenuItem("任务栏电量窗口")
+        {
+            Checked = _settings.ShowTaskbarBattery
+        };
+        _taskbarBatteryMenuItem.Click += (_, _) => SetTaskbarBatteryWindowEnabled(!_settings.ShowTaskbarBattery);
+        menu.Items.Add(_taskbarBatteryMenuItem);
+
+        _startupMenuItem = new ToolStripMenuItem("开机自启")
+        {
+            Checked = _settings.StartWithWindows
+        };
+        _startupMenuItem.Click += (_, _) => SetStartWithWindowsEnabled(!_settings.StartWithWindows);
+        menu.Items.Add(_startupMenuItem);
+
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => ExitThread());
         return menu;
@@ -109,6 +139,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var snapshot = await Task.Run(_reader.ReadBattery);
             _latest = snapshot;
             _form.UpdateSnapshot(snapshot);
+            _taskbarBatteryForm.UpdateSnapshot(snapshot);
             UpdateTray(snapshot);
         }
         finally
@@ -123,6 +154,50 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _notifyIcon.Text = $"罗技鼠标电量：{status}";
     }
 
+    private void SetTaskbarBatteryWindowEnabled(bool enabled)
+    {
+        _settings.ShowTaskbarBattery = enabled;
+        _settings.Save();
+
+        if (_taskbarBatteryMenuItem is not null)
+        {
+            _taskbarBatteryMenuItem.Checked = enabled;
+        }
+
+        if (enabled)
+        {
+            _taskbarBatteryForm.UpdateSnapshot(_latest);
+            _taskbarBatteryForm.ShowPinned();
+            return;
+        }
+
+        _taskbarBatteryForm.Hide();
+    }
+
+    private void SetStartWithWindowsEnabled(bool enabled)
+    {
+        try
+        {
+            StartupManager.SetEnabled(Application.ExecutablePath, enabled);
+            _settings.StartWithWindows = enabled;
+            _settings.Save();
+
+            if (_startupMenuItem is not null)
+            {
+                _startupMenuItem.Checked = enabled;
+            }
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            if (_startupMenuItem is not null)
+            {
+                _startupMenuItem.Checked = _settings.StartWithWindows;
+            }
+
+            _notifyIcon.ShowBalloonTip(3000, "开机自启设置失败", ex.Message, ToolTipIcon.Warning);
+        }
+    }
+
     protected override void ExitThreadCore()
     {
         _timer.Stop();
@@ -131,6 +206,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _showWindowEvent.Dispose();
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
+        _taskbarBatteryForm.Dispose();
         _form.Dispose();
         _windowIcon.Dispose();
         _trayIcon.Dispose();
