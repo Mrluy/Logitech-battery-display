@@ -245,7 +245,7 @@ internal sealed class TaskbarBatteryForm : Form
                     return true;
                 }
 
-                var hasNotificationAnchor = TryGetNotificationAnchorBounds(hWnd, taskbarBounds, out var notificationAnchor);
+                var hasNotificationAnchor = TryGetNotificationAreaBounds(hWnd, out var notificationAnchor);
                 var hasTaskList = TryGetChildTaskListBounds(hWnd, out var taskList);
                 if (hasNotificationAnchor)
                 {
@@ -274,7 +274,7 @@ internal sealed class TaskbarBatteryForm : Form
         return bestScore > 0 && bounds.Bounds.Width > 0 && bounds.Bounds.Height > 0;
     }
 
-    private static bool TryGetNotificationAnchorBounds(IntPtr taskbar, Rectangle taskbarBounds, out Rectangle bounds)
+    private static bool TryGetNotificationAreaBounds(IntPtr taskbar, out Rectangle bounds)
     {
         bounds = Rectangle.Empty;
         if (taskbar == IntPtr.Zero)
@@ -302,44 +302,8 @@ internal sealed class TaskbarBatteryForm : Form
             return false;
         }
 
-        var trayBounds = Rectangle.FromLTRB(trayRect.Left, trayRect.Top, trayRect.Right, trayRect.Bottom);
-        var hiddenIconsButton = Rectangle.Empty;
-        EnumChildWindows(
-            trayNotify,
-            (hWnd, _) =>
-            {
-                if (GetWindowClassName(hWnd) != "SIBTrayButton" || !GetWindowRect(hWnd, out var rect))
-                {
-                    return true;
-                }
-
-                var buttonBounds = Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
-                if (IntersectionArea(buttonBounds, trayBounds) <= 0)
-                {
-                    return true;
-                }
-
-                if (hiddenIconsButton.IsEmpty || IsCloserToTaskList(buttonBounds, hiddenIconsButton, taskbarBounds))
-                {
-                    hiddenIconsButton = buttonBounds;
-                }
-
-                return true;
-            },
-            IntPtr.Zero);
-
-        bounds = hiddenIconsButton.IsEmpty ? trayBounds : hiddenIconsButton;
+        bounds = Rectangle.FromLTRB(trayRect.Left, trayRect.Top, trayRect.Right, trayRect.Bottom);
         return bounds.Width > 0 && bounds.Height > 0;
-    }
-
-    private static bool IsCloserToTaskList(Rectangle candidate, Rectangle current, Rectangle taskbar)
-    {
-        if (taskbar.Height <= taskbar.Width)
-        {
-            return candidate.Left < current.Left;
-        }
-
-        return candidate.Top < current.Top;
     }
 
     private static bool TryGetChildTaskListBounds(IntPtr taskbar, out Rectangle bounds)
