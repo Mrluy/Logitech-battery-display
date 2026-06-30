@@ -427,9 +427,6 @@ internal sealed class BatteryStatusForm : Form
                 using var fillPath = RoundedRect(inner, 5);
                 graphics.FillPath(fill, fillPath);
             }
-
-            using var gloss = new Pen(Color.FromArgb(50, 255, 255, 255), 1.2F);
-            graphics.DrawLine(gloss, bounds.Left + 11, bounds.Top + 10, bounds.Right - 12, bounds.Top + 10);
         }
     }
 
