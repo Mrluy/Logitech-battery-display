@@ -89,9 +89,9 @@ internal sealed class TaskbarBatteryForm : Form
             return;
         }
 
-        if (TryGetTaskListBounds(screen, out var taskList) && taskList.Width > Width && taskList.Height > 0)
+        if (TryGetTaskbarAnchor(screen, out var taskbarAnchor) && taskbarAnchor.Bounds.Width > 0 && taskbarAnchor.Bounds.Height > 0)
         {
-            Location = GetTaskListLocation(taskList, taskbar);
+            Location = GetTaskbarAnchorLocation(taskbarAnchor, taskbar);
             return;
         }
 
@@ -130,20 +130,23 @@ internal sealed class TaskbarBatteryForm : Form
         return Screen.PrimaryScreen ?? screens.FirstOrDefault();
     }
 
-    private Point GetTaskListLocation(Rectangle taskList, Rectangle taskbar)
+    private Point GetTaskbarAnchorLocation(TaskbarAnchorCandidate anchorCandidate, Rectangle taskbar)
     {
         const int horizontalRightGap = 24;
         const int verticalBottomGap = 14;
+        var anchor = anchorCandidate.Bounds;
         if (taskbar.Height <= taskbar.Width)
         {
+            var rightEdge = anchorCandidate.IsNotificationAnchor ? anchor.Left : anchor.Right;
             return new Point(
-                taskList.Right - Width - horizontalRightGap,
-                taskList.Top + Math.Max(0, (taskList.Height - Height) / 2));
+                rightEdge - Width - horizontalRightGap,
+                anchor.Top + Math.Max(0, (anchor.Height - Height) / 2));
         }
 
+        var bottomEdge = anchorCandidate.IsNotificationAnchor ? anchor.Top : anchor.Bottom;
         return new Point(
-            taskList.Left + Math.Max(0, (taskList.Width - Width) / 2),
-            taskList.Bottom - Height - verticalBottomGap);
+            anchor.Left + Math.Max(0, (anchor.Width - Width) / 2),
+            bottomEdge - Height - verticalBottomGap);
     }
 
     protected override void OnPaintBackground(PaintEventArgs e)
@@ -213,10 +216,10 @@ internal sealed class TaskbarBatteryForm : Form
         return Rectangle.Empty;
     }
 
-    private static bool TryGetTaskListBounds(Screen screen, out Rectangle bounds)
+    private static bool TryGetTaskbarAnchor(Screen screen, out TaskbarAnchorCandidate bounds)
     {
-        bounds = Rectangle.Empty;
-        var candidates = new List<Rectangle>();
+        bounds = default;
+        var candidates = new List<TaskbarAnchorCandidate>();
         EnumWindows(
             (hWnd, _) =>
             {
@@ -226,9 +229,31 @@ internal sealed class TaskbarBatteryForm : Form
                     return true;
                 }
 
-                if (TryGetChildTaskListBounds(hWnd, out var taskList))
+                if (!GetWindowRect(hWnd, out var taskbarRect))
                 {
-                    candidates.Add(taskList);
+                    return true;
+                }
+
+                var taskbarBounds = Rectangle.FromLTRB(
+                    taskbarRect.Left,
+                    taskbarRect.Top,
+                    taskbarRect.Right,
+                    taskbarRect.Bottom);
+                var score = IntersectionArea(taskbarBounds, screen.Bounds);
+                if (score <= 0)
+                {
+                    return true;
+                }
+
+                var hasNotificationAnchor = TryGetNotificationAnchorBounds(hWnd, taskbarBounds, out var notificationAnchor);
+                var hasTaskList = TryGetChildTaskListBounds(hWnd, out var taskList);
+                if (hasNotificationAnchor)
+                {
+                    candidates.Add(new TaskbarAnchorCandidate(notificationAnchor, score, true));
+                }
+                else if (hasTaskList)
+                {
+                    candidates.Add(new TaskbarAnchorCandidate(taskList, score, false));
                 }
 
                 return true;
@@ -238,7 +263,7 @@ internal sealed class TaskbarBatteryForm : Form
         var bestScore = 0;
         foreach (var candidate in candidates)
         {
-            var score = IntersectionArea(candidate, screen.Bounds);
+            var score = candidate.Score + (candidate.IsNotificationAnchor ? 1 : 0);
             if (score > bestScore)
             {
                 bestScore = score;
@@ -246,7 +271,75 @@ internal sealed class TaskbarBatteryForm : Form
             }
         }
 
-        return bestScore > 0 && bounds.Width > 0 && bounds.Height > 0;
+        return bestScore > 0 && bounds.Bounds.Width > 0 && bounds.Bounds.Height > 0;
+    }
+
+    private static bool TryGetNotificationAnchorBounds(IntPtr taskbar, Rectangle taskbarBounds, out Rectangle bounds)
+    {
+        bounds = Rectangle.Empty;
+        if (taskbar == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        var trayNotify = IntPtr.Zero;
+        EnumChildWindows(
+            taskbar,
+            (hWnd, _) =>
+            {
+                if (GetWindowClassName(hWnd) == "TrayNotifyWnd")
+                {
+                    trayNotify = hWnd;
+                    return false;
+                }
+
+                return true;
+            },
+            IntPtr.Zero);
+
+        if (trayNotify == IntPtr.Zero || !GetWindowRect(trayNotify, out var trayRect))
+        {
+            return false;
+        }
+
+        var trayBounds = Rectangle.FromLTRB(trayRect.Left, trayRect.Top, trayRect.Right, trayRect.Bottom);
+        var hiddenIconsButton = Rectangle.Empty;
+        EnumChildWindows(
+            trayNotify,
+            (hWnd, _) =>
+            {
+                if (GetWindowClassName(hWnd) != "SIBTrayButton" || !GetWindowRect(hWnd, out var rect))
+                {
+                    return true;
+                }
+
+                var buttonBounds = Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+                if (IntersectionArea(buttonBounds, trayBounds) <= 0)
+                {
+                    return true;
+                }
+
+                if (hiddenIconsButton.IsEmpty || IsCloserToTaskList(buttonBounds, hiddenIconsButton, taskbarBounds))
+                {
+                    hiddenIconsButton = buttonBounds;
+                }
+
+                return true;
+            },
+            IntPtr.Zero);
+
+        bounds = hiddenIconsButton.IsEmpty ? trayBounds : hiddenIconsButton;
+        return bounds.Width > 0 && bounds.Height > 0;
+    }
+
+    private static bool IsCloserToTaskList(Rectangle candidate, Rectangle current, Rectangle taskbar)
+    {
+        if (taskbar.Height <= taskbar.Width)
+        {
+            return candidate.Left < current.Left;
+        }
+
+        return candidate.Top < current.Top;
     }
 
     private static bool TryGetChildTaskListBounds(IntPtr taskbar, out Rectangle bounds)
@@ -286,6 +379,15 @@ internal sealed class TaskbarBatteryForm : Form
     {
         var intersection = Rectangle.Intersect(first, second);
         return intersection.Width <= 0 || intersection.Height <= 0 ? 0 : intersection.Width * intersection.Height;
+    }
+
+    private readonly struct TaskbarAnchorCandidate(Rectangle bounds, int score, bool isNotificationAnchor)
+    {
+        public Rectangle Bounds { get; } = bounds;
+
+        public int Score { get; } = score;
+
+        public bool IsNotificationAnchor { get; } = isNotificationAnchor;
     }
 
     private static string GetWindowClassName(IntPtr hWnd)
