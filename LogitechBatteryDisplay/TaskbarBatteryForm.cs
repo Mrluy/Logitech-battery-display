@@ -9,6 +9,7 @@ internal sealed class TaskbarBatteryForm : Form
 {
     private static readonly Color Transparent = Color.FromArgb(255, 1, 2, 3);
     private BatterySnapshot _snapshot = BatterySnapshot.Error("正在读取鼠标电量...");
+    private string? _targetScreenDeviceName;
 
     public TaskbarBatteryForm()
     {
@@ -63,9 +64,18 @@ internal sealed class TaskbarBatteryForm : Form
         Show();
     }
 
+    public void SetTargetScreen(string? deviceName)
+    {
+        _targetScreenDeviceName = string.IsNullOrWhiteSpace(deviceName) ? null : deviceName;
+        if (Visible)
+        {
+            Reposition();
+        }
+    }
+
     public void Reposition()
     {
-        var screen = Screen.PrimaryScreen ?? Screen.AllScreens.FirstOrDefault();
+        var screen = ResolveTargetScreen();
         if (screen is null)
         {
             return;
@@ -79,7 +89,7 @@ internal sealed class TaskbarBatteryForm : Form
             return;
         }
 
-        if (TryGetTaskListBounds(out var taskList) && taskList.Width > Width && taskList.Height > 0)
+        if (TryGetTaskListBounds(screen, out var taskList) && taskList.Width > Width && taskList.Height > 0)
         {
             Location = GetTaskListLocation(taskList, taskbar);
             return;
@@ -102,6 +112,22 @@ internal sealed class TaskbarBatteryForm : Form
         Location = new Point(
             taskbar.Left + Math.Max(0, (taskbar.Width - Width) / 2),
             taskbar.Bottom - Height - reservedRightForTray);
+    }
+
+    private Screen? ResolveTargetScreen()
+    {
+        var screens = Screen.AllScreens;
+        if (!string.IsNullOrWhiteSpace(_targetScreenDeviceName))
+        {
+            var selected = screens.FirstOrDefault(screen =>
+                string.Equals(screen.DeviceName, _targetScreenDeviceName, StringComparison.OrdinalIgnoreCase));
+            if (selected is not null)
+            {
+                return selected;
+            }
+        }
+
+        return Screen.PrimaryScreen ?? screens.FirstOrDefault();
     }
 
     private Point GetTaskListLocation(Rectangle taskList, Rectangle taskbar)
@@ -187,10 +213,45 @@ internal sealed class TaskbarBatteryForm : Form
         return Rectangle.Empty;
     }
 
-    private static bool TryGetTaskListBounds(out Rectangle bounds)
+    private static bool TryGetTaskListBounds(Screen screen, out Rectangle bounds)
     {
         bounds = Rectangle.Empty;
-        var taskbar = FindWindow("Shell_TrayWnd", null);
+        var candidates = new List<Rectangle>();
+        EnumWindows(
+            (hWnd, _) =>
+            {
+                var className = GetWindowClassName(hWnd);
+                if (className != "Shell_TrayWnd" && className != "Shell_SecondaryTrayWnd")
+                {
+                    return true;
+                }
+
+                if (TryGetChildTaskListBounds(hWnd, out var taskList))
+                {
+                    candidates.Add(taskList);
+                }
+
+                return true;
+            },
+            IntPtr.Zero);
+
+        var bestScore = 0;
+        foreach (var candidate in candidates)
+        {
+            var score = IntersectionArea(candidate, screen.Bounds);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bounds = candidate;
+            }
+        }
+
+        return bestScore > 0 && bounds.Width > 0 && bounds.Height > 0;
+    }
+
+    private static bool TryGetChildTaskListBounds(IntPtr taskbar, out Rectangle bounds)
+    {
+        bounds = Rectangle.Empty;
         if (taskbar == IntPtr.Zero)
         {
             return false;
@@ -219,6 +280,12 @@ internal sealed class TaskbarBatteryForm : Form
 
         bounds = Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
         return bounds.Width > 0 && bounds.Height > 0;
+    }
+
+    private static int IntersectionArea(Rectangle first, Rectangle second)
+    {
+        var intersection = Rectangle.Intersect(first, second);
+        return intersection.Width <= 0 || intersection.Height <= 0 ? 0 : intersection.Width * intersection.Height;
     }
 
     private static string GetWindowClassName(IntPtr hWnd)
@@ -335,8 +402,8 @@ internal sealed class TaskbarBatteryForm : Form
 
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern IntPtr FindWindow(string lpClassName, string? lpWindowName);
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
     [DllImport("user32.dll")]
     private static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);

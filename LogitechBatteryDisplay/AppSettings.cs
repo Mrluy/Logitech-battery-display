@@ -11,6 +11,8 @@ internal sealed class AppSettings
 
     public bool ShowTaskbarBattery { get; set; }
 
+    public string? TaskbarBatteryScreenDeviceName { get; set; }
+
     public bool StartWithWindows { get; set; }
 
     public static AppSettings Load()

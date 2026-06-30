@@ -13,6 +13,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly RegisteredWaitHandle _showWindowRegistration;
     private readonly AppSettings _settings;
     private ToolStripMenuItem? _taskbarBatteryMenuItem;
+    private ToolStripMenuItem? _taskbarScreenMenuItem;
     private ToolStripMenuItem? _startupMenuItem;
     private bool _isRefreshing;
     private BatterySnapshot _latest = BatterySnapshot.Error("正在读取鼠标电量...");
@@ -53,6 +54,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             false);
 
         _taskbarBatteryForm = new TaskbarBatteryForm();
+        _taskbarBatteryForm.SetTargetScreen(_settings.TaskbarBatteryScreenDeviceName);
         _taskbarBatteryForm.UpdateSnapshot(_latest);
         if (_settings.ShowTaskbarBattery)
         {
@@ -85,6 +87,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private ContextMenuStrip BuildMenu()
     {
         var menu = new ContextMenuStrip();
+        menu.Opening += (_, _) => RefreshTaskbarScreenMenu();
         menu.Items.Add("显示状态", null, (_, _) => ShowStatusWindow());
         menu.Items.Add("立即刷新", null, async (_, _) => await RefreshAsync());
         menu.Items.Add(new ToolStripSeparator());
@@ -95,6 +98,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
         };
         _taskbarBatteryMenuItem.Click += (_, _) => SetTaskbarBatteryWindowEnabled(!_settings.ShowTaskbarBattery);
         menu.Items.Add(_taskbarBatteryMenuItem);
+
+        _taskbarScreenMenuItem = new ToolStripMenuItem("任务栏显示器");
+        RefreshTaskbarScreenMenu();
+        menu.Items.Add(_taskbarScreenMenuItem);
 
         _startupMenuItem = new ToolStripMenuItem("开机自启")
         {
@@ -172,6 +179,74 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
 
         _taskbarBatteryForm.Hide();
+    }
+
+    private void SetTaskbarBatteryScreen(string? deviceName)
+    {
+        _settings.TaskbarBatteryScreenDeviceName = string.IsNullOrWhiteSpace(deviceName) ? null : deviceName;
+        _settings.Save();
+        _taskbarBatteryForm.SetTargetScreen(_settings.TaskbarBatteryScreenDeviceName);
+        RefreshTaskbarScreenMenu();
+
+        if (_settings.ShowTaskbarBattery)
+        {
+            _taskbarBatteryForm.ShowPinned();
+        }
+    }
+
+    private void RefreshTaskbarScreenMenu()
+    {
+        if (_taskbarScreenMenuItem is null)
+        {
+            return;
+        }
+
+        _taskbarScreenMenuItem.DropDownItems.Clear();
+        var selectedDeviceName = _settings.TaskbarBatteryScreenDeviceName;
+        var screens = Screen.AllScreens
+            .OrderBy(screen => screen.Bounds.Left)
+            .ThenBy(screen => screen.Bounds.Top)
+            .ToArray();
+
+        var followPrimaryItem = new ToolStripMenuItem("跟随主显示器")
+        {
+            Checked = string.IsNullOrWhiteSpace(selectedDeviceName)
+        };
+        followPrimaryItem.Click += (_, _) => SetTaskbarBatteryScreen(null);
+        _taskbarScreenMenuItem.DropDownItems.Add(followPrimaryItem);
+
+        if (screens.Length > 0)
+        {
+            _taskbarScreenMenuItem.DropDownItems.Add(new ToolStripSeparator());
+        }
+
+        for (var index = 0; index < screens.Length; index++)
+        {
+            var screen = screens[index];
+            var deviceName = screen.DeviceName;
+            var item = new ToolStripMenuItem(BuildScreenMenuLabel(screen, index))
+            {
+                Checked = string.Equals(selectedDeviceName, deviceName, StringComparison.OrdinalIgnoreCase)
+            };
+            item.Click += (_, _) => SetTaskbarBatteryScreen(deviceName);
+            _taskbarScreenMenuItem.DropDownItems.Add(item);
+        }
+
+        _taskbarScreenMenuItem.Enabled = _taskbarScreenMenuItem.DropDownItems.Count > 0;
+    }
+
+    private static string BuildScreenMenuLabel(Screen screen, int index)
+    {
+        var primarySuffix = screen.Primary ? "（主显示器）" : string.Empty;
+        return $"显示器 {index + 1}{primarySuffix} - {ShortDeviceName(screen.DeviceName)} {screen.Bounds.Width}x{screen.Bounds.Height}";
+    }
+
+    private static string ShortDeviceName(string deviceName)
+    {
+        var slashIndex = deviceName.LastIndexOf('\\');
+        return slashIndex >= 0 && slashIndex < deviceName.Length - 1
+            ? deviceName[(slashIndex + 1)..]
+            : deviceName;
     }
 
     private void SetStartWithWindowsEnabled(bool enabled)
