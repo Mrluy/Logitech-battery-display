@@ -148,6 +148,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _latest = snapshot;
             _form.UpdateSnapshot(snapshot);
             _taskbarBatteryForm.UpdateSnapshot(snapshot);
+            if (_settings.ShowTaskbarBattery)
+            {
+                _taskbarBatteryForm.Reposition();
+            }
+
             UpdateTray(snapshot);
         }
         finally
