@@ -190,7 +190,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        _taskbarBatteryForm.Hide();
+        _taskbarBatteryForm.HidePinned();
     }
 
     private void SetTaskbarBatteryScreen(string? deviceName)

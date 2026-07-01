@@ -10,8 +10,12 @@ internal sealed class TaskbarBatteryForm : Form
     private static readonly Color Transparent = Color.FromArgb(255, 1, 2, 3);
     private const string TaskbarWindowMarker = "LogitechBatteryDisplay.TaskbarBatteryWindow";
     private const int CollisionGap = 8;
+    private const int SwpNoZOrder = 0x0004;
+    private const int SwpNoActivate = 0x0010;
     private BatterySnapshot _snapshot = BatterySnapshot.Error("正在读取鼠标电量...");
     private string? _targetScreenDeviceName;
+    private bool _isPinned;
+    private readonly Dictionary<IntPtr, Rectangle> _originalTaskListBounds = new();
 
     public TaskbarBatteryForm()
     {
@@ -65,12 +69,20 @@ internal sealed class TaskbarBatteryForm : Form
 
     public void ShowPinned()
     {
+        _isPinned = true;
         Reposition();
-        Show();
+    }
+
+    public void HidePinned()
+    {
+        _isPinned = false;
+        RestoreReservedTaskLists();
+        Hide();
     }
 
     public void SetTargetScreen(string? deviceName)
     {
+        RestoreReservedTaskLists();
         _targetScreenDeviceName = string.IsNullOrWhiteSpace(deviceName) ? null : deviceName;
         if (Visible)
         {
@@ -89,14 +101,15 @@ internal sealed class TaskbarBatteryForm : Form
         var taskbar = GetTaskbarBounds(screen);
         if (taskbar.Width <= 0 || taskbar.Height <= 0)
         {
+            RestoreReservedTaskLists();
             var workingArea = screen.WorkingArea;
-            Location = new Point(workingArea.Right - Width - 24, workingArea.Bottom - Height - 12);
+            ApplyPinnedLocation(new Point(workingArea.Right - Width - 24, workingArea.Bottom - Height - 12));
             return;
         }
 
         if (TryGetTaskbarAnchor(screen, out var taskbarAnchor) && taskbarAnchor.Bounds.Width > 0 && taskbarAnchor.Bounds.Height > 0)
         {
-            Location = AvoidOccupiedTaskbarWindows(GetTaskbarAnchorLocation(taskbarAnchor, taskbar), screen, taskbar);
+            ApplyAvailableTaskbarLocation(GetTaskbarAnchorLocation(taskbarAnchor, taskbar), screen, taskbar);
             return;
         }
 
@@ -110,14 +123,14 @@ internal sealed class TaskbarBatteryForm : Form
                 x = taskbar.Right - Width - margin;
             }
 
-            Location = AvoidOccupiedTaskbarWindows(
+            ApplyAvailableTaskbarLocation(
                 new Point(x, taskbar.Top + Math.Max(0, (taskbar.Height - Height) / 2)),
                 screen,
                 taskbar);
             return;
         }
 
-        Location = AvoidOccupiedTaskbarWindows(
+        ApplyAvailableTaskbarLocation(
             new Point(
                 taskbar.Left + Math.Max(0, (taskbar.Width - Width) / 2),
                 taskbar.Bottom - Height - reservedRightForTray),
@@ -162,6 +175,26 @@ internal sealed class TaskbarBatteryForm : Form
             bottomEdge - Height - bottomGap);
     }
 
+    private void ApplyAvailableTaskbarLocation(Point proposedLocation, Screen screen, Rectangle taskbar)
+    {
+        if (TryFindAvailableTaskbarLocation(proposedLocation, screen, taskbar, out var location))
+        {
+            ApplyPinnedLocation(location);
+            return;
+        }
+
+        Hide();
+    }
+
+    private void ApplyPinnedLocation(Point location)
+    {
+        Location = location;
+        if (_isPinned && !Visible)
+        {
+            Show();
+        }
+    }
+
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
@@ -196,6 +229,7 @@ internal sealed class TaskbarBatteryForm : Form
     {
         if (disposing)
         {
+            RestoreReservedTaskLists();
             SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
             SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
         }
@@ -299,7 +333,7 @@ internal sealed class TaskbarBatteryForm : Form
         return bestScore > 0 && bounds.Bounds.Width > 0 && bounds.Bounds.Height > 0;
     }
 
-    private Point AvoidOccupiedTaskbarWindows(Point proposedLocation, Screen screen, Rectangle taskbar)
+    private bool TryFindAvailableTaskbarLocation(Point proposedLocation, Screen screen, Rectangle taskbar, out Point location)
     {
         var bounds = new Rectangle(proposedLocation, Size);
         var occupied = GetOccupiedTaskbarWindows(screen, taskbar);
@@ -336,7 +370,9 @@ internal sealed class TaskbarBatteryForm : Form
             bounds.Y = nextY;
         }
 
-        return bounds.Location;
+        ReserveTaskListSpace(screen, taskbar, bounds);
+        location = bounds.Location;
+        return true;
     }
 
     private List<Rectangle> GetOccupiedTaskbarWindows(Screen screen, Rectangle taskbar)
@@ -372,6 +408,70 @@ internal sealed class TaskbarBatteryForm : Form
         return taskbar.Height <= taskbar.Width
             ? occupied.OrderByDescending(rect => rect.Left).ToList()
             : occupied.OrderByDescending(rect => rect.Top).ToList();
+    }
+
+    private void ReserveTaskListSpace(Screen screen, Rectangle taskbar, Rectangle reservedBounds)
+    {
+        foreach (var taskbarWindow in GetTaskbarWindows(screen))
+        {
+            if (!TryGetReservableTaskList(taskbarWindow, taskbar, out var taskList, out var currentBounds) ||
+                !currentBounds.IntersectsWith(taskbar))
+            {
+                continue;
+            }
+
+            if (!_originalTaskListBounds.TryGetValue(taskList, out var originalBounds) ||
+                !originalBounds.IntersectsWith(taskbar))
+            {
+                originalBounds = currentBounds;
+                _originalTaskListBounds[taskList] = originalBounds;
+            }
+
+            var targetBounds = originalBounds;
+            if (taskbar.Height <= taskbar.Width)
+            {
+                var reservedStart = Math.Clamp(reservedBounds.Left - CollisionGap, originalBounds.Left, originalBounds.Right);
+                targetBounds = Rectangle.FromLTRB(originalBounds.Left, originalBounds.Top, reservedStart, originalBounds.Bottom);
+            }
+            else
+            {
+                var reservedStart = Math.Clamp(reservedBounds.Top - CollisionGap, originalBounds.Top, originalBounds.Bottom);
+                targetBounds = Rectangle.FromLTRB(originalBounds.Left, originalBounds.Top, originalBounds.Right, reservedStart);
+            }
+
+            SetChildWindowScreenBounds(taskList, targetBounds);
+        }
+    }
+
+    private void RestoreReservedTaskLists()
+    {
+        foreach (var item in _originalTaskListBounds.ToArray())
+        {
+            SetChildWindowScreenBounds(item.Key, item.Value);
+        }
+
+        _originalTaskListBounds.Clear();
+    }
+
+    private static void SetChildWindowScreenBounds(IntPtr childWindow, Rectangle screenBounds)
+    {
+        var parent = GetParent(childWindow);
+        var x = screenBounds.Left;
+        var y = screenBounds.Top;
+        if (parent != IntPtr.Zero && GetWindowRect(parent, out var parentRect))
+        {
+            x -= parentRect.Left;
+            y -= parentRect.Top;
+        }
+
+        SetWindowPos(
+            childWindow,
+            IntPtr.Zero,
+            x,
+            y,
+            Math.Max(0, screenBounds.Width),
+            Math.Max(0, screenBounds.Height),
+            SwpNoZOrder | SwpNoActivate);
     }
 
     private static void AddOccupiedTaskbarChildWindows(
@@ -553,27 +653,68 @@ internal sealed class TaskbarBatteryForm : Form
 
     private static bool TryGetChildTaskListBounds(IntPtr taskbar, out Rectangle bounds)
     {
+        return TryGetChildTaskList(taskbar, out _, out bounds);
+    }
+
+    private static bool TryGetReservableTaskList(IntPtr taskbar, Rectangle taskbarBounds, out IntPtr taskListHost, out Rectangle bounds)
+    {
+        taskListHost = IntPtr.Zero;
+        bounds = Rectangle.Empty;
+        if (!TryGetChildTaskList(taskbar, out var taskList, out var taskListBounds))
+        {
+            return false;
+        }
+
+        taskListHost = taskList;
+        bounds = taskListBounds;
+
+        var parent = GetParent(taskList);
+        if (parent == IntPtr.Zero || parent == taskbar || !GetWindowRect(parent, out var parentRect))
+        {
+            return true;
+        }
+
+        var parentBounds = Rectangle.FromLTRB(parentRect.Left, parentRect.Top, parentRect.Right, parentRect.Bottom);
+        if (IsTaskListHostCandidate(parent, parentBounds, taskbarBounds))
+        {
+            taskListHost = parent;
+            bounds = parentBounds;
+        }
+
+        return true;
+    }
+
+    private static bool TryGetChildTaskList(IntPtr taskbar, out IntPtr taskList, out Rectangle bounds)
+    {
+        taskList = IntPtr.Zero;
         bounds = Rectangle.Empty;
         if (taskbar == IntPtr.Zero)
         {
             return false;
         }
 
-        var taskList = IntPtr.Zero;
+        var preferredTaskList = IntPtr.Zero;
+        var fallbackTaskList = IntPtr.Zero;
         EnumChildWindows(
             taskbar,
             (hWnd, _) =>
             {
                 var className = GetWindowClassName(hWnd);
-                if (className is "MSTaskListWClass" or "MSTaskSwWClass")
+                if (className == "MSTaskListWClass")
                 {
-                    taskList = hWnd;
+                    preferredTaskList = hWnd;
                     return false;
+                }
+
+                if (className == "MSTaskSwWClass" && fallbackTaskList == IntPtr.Zero)
+                {
+                    fallbackTaskList = hWnd;
                 }
 
                 return true;
             },
             IntPtr.Zero);
+        taskList = preferredTaskList == IntPtr.Zero ? fallbackTaskList : preferredTaskList;
 
         if (taskList == IntPtr.Zero || !GetWindowRect(taskList, out var rect))
         {
@@ -582,6 +723,24 @@ internal sealed class TaskbarBatteryForm : Form
 
         bounds = Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
         return bounds.Width > 0 && bounds.Height > 0;
+    }
+
+    private static bool IsTaskListHostCandidate(IntPtr hWnd, Rectangle bounds, Rectangle taskbar)
+    {
+        var className = GetWindowClassName(hWnd);
+        if (className is not ("WorkerW" or "MSTaskSwWClass"))
+        {
+            return false;
+        }
+
+        if (bounds.Width <= 0 || bounds.Height <= 0 || !bounds.IntersectsWith(taskbar))
+        {
+            return false;
+        }
+
+        return taskbar.Height <= taskbar.Width
+            ? bounds.Height <= taskbar.Height + 8 && bounds.Width <= taskbar.Width
+            : bounds.Width <= taskbar.Width + 8 && bounds.Height <= taskbar.Height;
     }
 
     private static int IntersectionArea(Rectangle first, Rectangle second)
@@ -729,7 +888,20 @@ internal sealed class TaskbarBatteryForm : Form
     private static extern bool GetWindowRect(IntPtr hWnd, out NativeRect lpRect);
 
     [DllImport("user32.dll")]
+    private static extern IntPtr GetParent(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(
+        IntPtr hWnd,
+        IntPtr hWndInsertAfter,
+        int x,
+        int y,
+        int cx,
+        int cy,
+        int uFlags);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern bool SetProp(IntPtr hWnd, string lpString, IntPtr hData);
