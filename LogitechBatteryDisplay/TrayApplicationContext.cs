@@ -2,6 +2,7 @@ namespace LogitechBatteryDisplay;
 
 internal sealed class TrayApplicationContext : ApplicationContext
 {
+    private static readonly TimeSpan SleepingMouseSnapshotRetention = TimeSpan.FromHours(24);
     private readonly LogitechBatteryReader _reader = new();
     private readonly NotifyIcon _notifyIcon;
     private readonly BatteryStatusForm _form;
@@ -17,6 +18,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private ToolStripMenuItem? _startupMenuItem;
     private bool _isRefreshing;
     private BatterySnapshot _latest = BatterySnapshot.Error("正在读取鼠标电量...");
+    private BatterySnapshot? _lastReadableSnapshot;
 
     public TrayApplicationContext(bool showOnStart = false)
     {
@@ -150,7 +152,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _isRefreshing = true;
         try
         {
-            var snapshot = await Task.Run(_reader.ReadBattery);
+            var snapshot = ApplySleepingMouseFallback(await Task.Run(_reader.ReadBattery));
             _latest = snapshot;
             _form.UpdateSnapshot(snapshot);
             _taskbarBatteryForm.UpdateSnapshot(snapshot);
@@ -165,6 +167,33 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             _isRefreshing = false;
         }
+    }
+
+    private BatterySnapshot ApplySleepingMouseFallback(BatterySnapshot snapshot)
+    {
+        if (snapshot.IsSuccess && snapshot.Percent is not null)
+        {
+            _lastReadableSnapshot = snapshot;
+            return snapshot;
+        }
+
+        if (!snapshot.IsSuccess && IsLastReadableSnapshotFresh())
+        {
+            return _lastReadableSnapshot!;
+        }
+
+        if (_lastReadableSnapshot is not null && !IsLastReadableSnapshotFresh())
+        {
+            _lastReadableSnapshot = null;
+        }
+
+        return snapshot;
+    }
+
+    private bool IsLastReadableSnapshotFresh()
+    {
+        return _lastReadableSnapshot is not null &&
+            DateTimeOffset.Now - _lastReadableSnapshot.Timestamp <= SleepingMouseSnapshotRetention;
     }
 
     private void UpdateTray(BatterySnapshot snapshot)
