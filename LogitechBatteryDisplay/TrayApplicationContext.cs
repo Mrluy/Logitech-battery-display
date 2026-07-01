@@ -196,6 +196,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
             DateTimeOffset.Now - _lastReadableSnapshot.Timestamp <= SleepingMouseSnapshotRetention;
     }
 
+    private void ClearSleepingMouseCache()
+    {
+        _lastReadableSnapshot = null;
+        _latest = BatterySnapshot.Error("正在读取鼠标电量...");
+    }
+
     private void UpdateTray(BatterySnapshot snapshot)
     {
         var status = snapshot.Percent is int value ? $"{value}%" : "未知";
@@ -353,6 +359,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     protected override void ExitThreadCore()
     {
+        ClearSleepingMouseCache();
         _timer.Stop();
         _timer.Dispose();
         _showWindowRegistration.Unregister(null);
