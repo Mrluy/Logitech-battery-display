@@ -24,6 +24,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         _settings = AppSettings.Load();
         _settings.StartWithWindows = StartupManager.IsEnabled(Application.ExecutablePath);
+        if (_settings.StartWithWindows)
+        {
+            try
+            {
+                StartupManager.SetEnabled(Application.ExecutablePath, enabled: true);
+            }
+            catch (Exception ex) when (IsStartupConfigurationException(ex))
+            {
+            }
+        }
 
         _trayIcon = LoadApplicationIcon();
         _windowIcon = (Icon)_trayIcon.Clone();
@@ -346,7 +356,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 _startupMenuItem.Checked = enabled;
             }
         }
-        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        catch (Exception ex) when (IsStartupConfigurationException(ex))
         {
             if (_startupMenuItem is not null)
             {
@@ -355,6 +365,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
             _notifyIcon.ShowBalloonTip(3000, "开机自启设置失败", ex.Message, ToolTipIcon.Warning);
         }
+    }
+
+    private static bool IsStartupConfigurationException(Exception ex)
+    {
+        return ex is UnauthorizedAccessException or IOException or InvalidOperationException or
+            System.Reflection.TargetInvocationException or System.Runtime.InteropServices.COMException;
     }
 
     protected override void ExitThreadCore()
