@@ -10,11 +10,6 @@ internal sealed class TaskbarBatteryForm : Form
     private static readonly Color Transparent = Color.FromArgb(255, 1, 2, 3);
     private const string TaskbarWindowMarker = "LogitechBatteryDisplay.TaskbarBatteryWindow";
     private const int CollisionGap = 8;
-    private const int GwlExStyle = -20;
-    private const long WsExTopMost = 0x00000008;
-    private const long WsExToolWindow = 0x00000080;
-    private const long WsExNoActivate = 0x08000000;
-    private const int DwmwaCloaked = 14;
     private BatterySnapshot _snapshot = BatterySnapshot.Error("正在读取鼠标电量...");
     private string? _targetScreenDeviceName;
 
@@ -351,7 +346,7 @@ internal sealed class TaskbarBatteryForm : Form
         EnumWindows(
             (hWnd, _) =>
             {
-                if (hWnd == ownHandle || !GetWindowRect(hWnd, out var rect))
+                if (hWnd == ownHandle || !IsWindowVisible(hWnd) || !GetWindowRect(hWnd, out var rect))
                 {
                     return true;
                 }
@@ -362,7 +357,7 @@ internal sealed class TaskbarBatteryForm : Form
                     return true;
                 }
 
-                if (!IsOccupiedTaskbarWindow(hWnd, bounds, screen, taskbar))
+                if (IsIgnoredCollisionWindow(hWnd, bounds, screen, taskbar))
                 {
                     return true;
                 }
@@ -377,28 +372,11 @@ internal sealed class TaskbarBatteryForm : Form
             : occupied.OrderByDescending(rect => rect.Top).ToList();
     }
 
-    private static bool IsOccupiedTaskbarWindow(IntPtr hWnd, Rectangle bounds, Screen screen, Rectangle taskbar)
-    {
-        if (IsIgnoredCollisionWindow(hWnd, bounds, screen, taskbar))
-        {
-            return false;
-        }
-
-        if (IsWindowVisible(hWnd))
-        {
-            return true;
-        }
-
-        return IsLikelyHiddenTaskbarOverlay(hWnd, bounds, taskbar);
-    }
-
     private static bool IsIgnoredCollisionWindow(IntPtr hWnd, Rectangle bounds, Screen screen, Rectangle taskbar)
     {
         var className = GetWindowClassName(hWnd);
         if (className is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "SIBTranslucentLayer" or
-            "EdgeUiInputTopWndClass" or "Progman" or "WorkerW" or "Button" or
-            "NotifyIconOverflowWindow" or "tooltips_class32" or "OrayUI_Shadow" or
-            "Qt5QWindowPopupDropShadowSaveBits")
+            "EdgeUiInputTopWndClass" or "Progman" or "WorkerW" or "Button")
         {
             return true;
         }
@@ -409,50 +387,6 @@ internal sealed class TaskbarBatteryForm : Form
         }
 
         return IntersectionArea(bounds, screen.Bounds) <= 0;
-    }
-
-    private static bool IsLikelyHiddenTaskbarOverlay(IntPtr hWnd, Rectangle bounds, Rectangle taskbar)
-    {
-        if (IsDwmCloaked(hWnd))
-        {
-            return false;
-        }
-
-        var exStyle = GetWindowExStyle(hWnd);
-        if ((exStyle & WsExTopMost) == 0)
-        {
-            return false;
-        }
-
-        var className = GetWindowClassName(hWnd);
-        if (className.StartsWith("WindowsForms10.Window.", StringComparison.Ordinal) ||
-            className.StartsWith("HwndWrapper[", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        var looksLikePassiveOverlay =
-            (exStyle & (WsExToolWindow | WsExNoActivate)) != 0 &&
-            bounds.Width <= 700 &&
-            bounds.Height <= taskbar.Height + 60;
-        return looksLikePassiveOverlay;
-    }
-
-    private static bool IsDwmCloaked(IntPtr hWnd)
-    {
-        return DwmGetWindowAttribute(hWnd, DwmwaCloaked, out var cloaked, sizeof(int)) == 0 && cloaked != 0;
-    }
-
-    private static long GetWindowExStyle(IntPtr hWnd)
-    {
-        return GetWindowLongPtr(hWnd, GwlExStyle).ToInt64();
-    }
-
-    private static IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex)
-    {
-        return IntPtr.Size == 8
-            ? GetWindowLongPtr64(hWnd, nIndex)
-            : new IntPtr(GetWindowLong32(hWnd, nIndex));
     }
 
     private static bool IntersectsWithGap(Rectangle first, Rectangle second, int gap)
@@ -704,15 +638,6 @@ internal sealed class TaskbarBatteryForm : Form
 
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out NativeRect lpRect);
-
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
-    private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
-
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
-    private static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
-
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern bool SetProp(IntPtr hWnd, string lpString, IntPtr hData);
