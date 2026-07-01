@@ -216,7 +216,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _taskbarScreenMenuItem.DropDownItems.Clear();
         var selectedDeviceName = _settings.TaskbarBatteryScreenDeviceName;
         var screens = Screen.AllScreens
-            .OrderBy(screen => screen.Bounds.Left)
+            .OrderBy(GetDisplaySortKey)
+            .ThenBy(screen => screen.Bounds.Left)
             .ThenBy(screen => screen.Bounds.Top)
             .ToArray();
 
@@ -236,7 +237,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             var screen = screens[index];
             var deviceName = screen.DeviceName;
-            var item = new ToolStripMenuItem(BuildScreenMenuLabel(screen, index))
+            var item = new ToolStripMenuItem(BuildScreenMenuLabel(screen))
             {
                 Checked = string.Equals(selectedDeviceName, deviceName, StringComparison.OrdinalIgnoreCase)
             };
@@ -247,10 +248,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _taskbarScreenMenuItem.Enabled = _taskbarScreenMenuItem.DropDownItems.Count > 0;
     }
 
-    private static string BuildScreenMenuLabel(Screen screen, int index)
+    private static string BuildScreenMenuLabel(Screen screen)
     {
         var primarySuffix = screen.Primary ? "（主显示器）" : string.Empty;
-        return $"显示器 {index + 1}{primarySuffix} - {ShortDeviceName(screen.DeviceName)} {screen.Bounds.Width}x{screen.Bounds.Height}";
+        var displayLabel = TryGetDisplayNumber(screen.DeviceName, out var displayNumber)
+            ? $"显示器 {displayNumber}"
+            : $"显示器 {ShortDeviceName(screen.DeviceName)}";
+        return $"{displayLabel}{primarySuffix} - {ShortDeviceName(screen.DeviceName)} {screen.Bounds.Width}x{screen.Bounds.Height}";
     }
 
     private static string ShortDeviceName(string deviceName)
@@ -259,6 +263,23 @@ internal sealed class TrayApplicationContext : ApplicationContext
         return slashIndex >= 0 && slashIndex < deviceName.Length - 1
             ? deviceName[(slashIndex + 1)..]
             : deviceName;
+    }
+
+    private static int GetDisplaySortKey(Screen screen)
+    {
+        return TryGetDisplayNumber(screen.DeviceName, out var displayNumber)
+            ? displayNumber
+            : int.MaxValue;
+    }
+
+    private static bool TryGetDisplayNumber(string deviceName, out int displayNumber)
+    {
+        displayNumber = 0;
+        var shortName = ShortDeviceName(deviceName);
+        const string prefix = "DISPLAY";
+        return shortName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(shortName[prefix.Length..], out displayNumber) &&
+            displayNumber > 0;
     }
 
     private static string GetApplicationVersion()
