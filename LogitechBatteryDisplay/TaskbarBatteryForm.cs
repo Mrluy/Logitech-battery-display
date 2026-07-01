@@ -9,13 +9,17 @@ internal sealed class TaskbarBatteryForm : Form
 {
     private static readonly Color Transparent = Color.FromArgb(255, 1, 2, 3);
     private const string TaskbarWindowMarker = "LogitechBatteryDisplay.TaskbarBatteryWindow";
+    private const string ToolTipWindowMarker = "LogitechBatteryDisplay.TaskbarBatteryToolTip";
     private const int CollisionGap = 8;
     private const int SwpNoZOrder = 0x0004;
     private const int SwpNoActivate = 0x0010;
     private BatterySnapshot _snapshot = BatterySnapshot.Error("正在读取鼠标电量...");
     private string? _targetScreenDeviceName;
     private bool _isPinned;
+    private string _toolTipText = string.Empty;
     private readonly Dictionary<IntPtr, Rectangle> _originalTaskListBounds = new();
+    private readonly BatteryToolTipForm _toolTip = new();
+    private readonly System.Windows.Forms.Timer _hoverTimer = new() { Interval = 150 };
 
     public TaskbarBatteryForm()
     {
@@ -35,6 +39,9 @@ internal sealed class TaskbarBatteryForm : Form
         DoubleBuffered = true;
         Font = new Font("Microsoft YaHei UI", 8.4F, FontStyle.Bold, GraphicsUnit.Point);
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
+        UpdateToolTipText();
+        _hoverTimer.Tick += (_, _) => UpdateHoverToolTip();
+        _hoverTimer.Start();
 
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
         SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
@@ -64,6 +71,7 @@ internal sealed class TaskbarBatteryForm : Form
         }
 
         _snapshot = snapshot;
+        UpdateToolTipText();
         Invalidate();
     }
 
@@ -76,6 +84,7 @@ internal sealed class TaskbarBatteryForm : Form
     public void HidePinned()
     {
         _isPinned = false;
+        _toolTip.Hide();
         RestoreReservedTaskLists();
         Hide();
     }
@@ -230,6 +239,9 @@ internal sealed class TaskbarBatteryForm : Form
         if (disposing)
         {
             RestoreReservedTaskLists();
+            _hoverTimer.Stop();
+            _hoverTimer.Dispose();
+            _toolTip.Dispose();
             SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
             SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
         }
@@ -245,6 +257,63 @@ internal sealed class TaskbarBatteryForm : Form
         {
             Reposition();
         }
+    }
+
+    private void UpdateToolTipText()
+    {
+        _toolTipText = BuildToolTipText(_snapshot);
+        if (_toolTip.Visible)
+        {
+            ShowBatteryToolTip();
+        }
+    }
+
+    private void UpdateHoverToolTip()
+    {
+        if (!_isPinned || !Visible || !Bounds.Contains(Cursor.Position))
+        {
+            _toolTip.Hide();
+            return;
+        }
+
+        ShowBatteryToolTip();
+    }
+
+    private void ShowBatteryToolTip()
+    {
+        if (string.IsNullOrWhiteSpace(_toolTipText))
+        {
+            _toolTip.Hide();
+            return;
+        }
+
+        _toolTip.ShowText(_toolTipText, GetToolTipLocation());
+    }
+
+    private static string BuildToolTipText(BatterySnapshot snapshot)
+    {
+        var deviceName = string.IsNullOrWhiteSpace(snapshot.DeviceName)
+            ? "罗技无线鼠标"
+            : snapshot.DeviceName.Trim();
+        var percentText = snapshot.Percent is int percent ? $"{percent}%" : "未知";
+        return $"{deviceName} 剩余电量 {percentText}";
+    }
+
+    private Point GetToolTipLocation()
+    {
+        var screen = ResolveTargetScreen() ?? Screen.FromPoint(new Point(Bounds.Left + Width / 2, Bounds.Top + Height / 2));
+        var screenBounds = screen.Bounds;
+        var x = Bounds.Left + (Width - _toolTip.Width) / 2;
+        var y = Bounds.Bottom + 6;
+
+        if (y + _toolTip.Height > screenBounds.Bottom - 4)
+        {
+            y = Bounds.Top - _toolTip.Height - 6;
+        }
+
+        x = Math.Clamp(x, screenBounds.Left + 4, screenBounds.Right - _toolTip.Width - 4);
+        y = Math.Clamp(y, screenBounds.Top + 4, screenBounds.Bottom - _toolTip.Height - 4);
+        return new Point(x, y);
     }
 
     private static Rectangle GetTaskbarBounds(Screen screen)
@@ -747,6 +816,92 @@ internal sealed class TaskbarBatteryForm : Form
     {
         var intersection = Rectangle.Intersect(first, second);
         return intersection.Width <= 0 || intersection.Height <= 0 ? 0 : intersection.Width * intersection.Height;
+    }
+
+    private sealed class BatteryToolTipForm : Form
+    {
+        private const int HorizontalPadding = 10;
+        private const int VerticalPadding = 6;
+        private string _text = string.Empty;
+
+        public BatteryToolTipForm()
+        {
+            Text = ToolTipWindowMarker;
+            Name = ToolTipWindowMarker;
+            AccessibleName = ToolTipWindowMarker;
+            FormBorderStyle = FormBorderStyle.None;
+            ShowInTaskbar = false;
+            StartPosition = FormStartPosition.Manual;
+            TopMost = true;
+            BackColor = Color.FromArgb(30, 34, 39);
+            Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+            DoubleBuffered = true;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
+            UpdateSize();
+        }
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                const int wsExNoActivate = 0x08000000;
+                const int wsExToolWindow = 0x00000080;
+                var cp = base.CreateParams;
+                cp.ExStyle |= wsExNoActivate | wsExToolWindow;
+                return cp;
+            }
+        }
+
+        protected override bool ShowWithoutActivation => true;
+
+        public void ShowText(string text, Point location)
+        {
+            if (!string.Equals(_text, text, StringComparison.Ordinal))
+            {
+                _text = text;
+                Text = _text;
+                AccessibleName = _text;
+                UpdateSize();
+                Invalidate();
+            }
+
+            if (Location != location)
+            {
+                Location = location;
+            }
+
+            if (!Visible)
+            {
+                Show();
+            }
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            e.Graphics.Clear(BackColor);
+
+            using var background = new SolidBrush(Color.FromArgb(240, 30, 34, 39));
+            using var border = new Pen(Color.FromArgb(125, 238, 244, 247), 1F);
+            using var path = RoundedRect(new Rectangle(0, 0, Width - 1, Height - 1), 5);
+            e.Graphics.FillPath(background, path);
+            e.Graphics.DrawPath(border, path);
+
+            TextRenderer.DrawText(
+                e.Graphics,
+                _text,
+                Font,
+                new Rectangle(HorizontalPadding, VerticalPadding, Width - HorizontalPadding * 2, Height - VerticalPadding * 2),
+                Color.FromArgb(245, 255, 255, 255),
+                TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
+
+        private void UpdateSize()
+        {
+            const TextFormatFlags flags = TextFormatFlags.SingleLine | TextFormatFlags.NoPadding;
+            var measured = TextRenderer.MeasureText(_text.Length == 0 ? " " : _text, Font, new Size(520, 0), flags);
+            Size = new Size(measured.Width + HorizontalPadding * 2, measured.Height + VerticalPadding * 2);
+        }
     }
 
     private readonly struct TaskbarAnchorCandidate(Rectangle bounds, int score, bool isNotificationAnchor)
