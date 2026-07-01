@@ -367,9 +367,75 @@ internal sealed class TaskbarBatteryForm : Form
             },
             IntPtr.Zero);
 
+        AddOccupiedTaskbarChildWindows(screen, taskbar, ownHandle, occupied);
+
         return taskbar.Height <= taskbar.Width
             ? occupied.OrderByDescending(rect => rect.Left).ToList()
             : occupied.OrderByDescending(rect => rect.Top).ToList();
+    }
+
+    private static void AddOccupiedTaskbarChildWindows(
+        Screen screen,
+        Rectangle taskbar,
+        IntPtr ownHandle,
+        List<Rectangle> occupied)
+    {
+        foreach (var taskbarWindow in GetTaskbarWindows(screen))
+        {
+            EnumChildWindows(
+                taskbarWindow,
+                (hWnd, _) =>
+                {
+                    if (hWnd == ownHandle || !IsWindowVisible(hWnd) || IsExplorerWindow(hWnd) || !GetWindowRect(hWnd, out var rect))
+                    {
+                        return true;
+                    }
+
+                    var bounds = Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+                    if (bounds.Width <= 0 || bounds.Height <= 0 || !bounds.IntersectsWith(taskbar))
+                    {
+                        return true;
+                    }
+
+                    if (IsIgnoredCollisionWindow(hWnd, bounds, screen, taskbar))
+                    {
+                        return true;
+                    }
+
+                    occupied.Add(bounds);
+                    return true;
+                },
+                IntPtr.Zero);
+        }
+    }
+
+    private static List<IntPtr> GetTaskbarWindows(Screen screen)
+    {
+        var taskbarWindows = new List<IntPtr>();
+        EnumWindows(
+            (hWnd, _) =>
+            {
+                var className = GetWindowClassName(hWnd);
+                if (className != "Shell_TrayWnd" && className != "Shell_SecondaryTrayWnd")
+                {
+                    return true;
+                }
+
+                if (!GetWindowRect(hWnd, out var rect))
+                {
+                    return true;
+                }
+
+                var bounds = Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+                if (IntersectionArea(bounds, screen.Bounds) > 0)
+                {
+                    taskbarWindows.Add(hWnd);
+                }
+
+                return true;
+            },
+            IntPtr.Zero);
+        return taskbarWindows;
     }
 
     private static bool IsIgnoredCollisionWindow(IntPtr hWnd, Rectangle bounds, Screen screen, Rectangle taskbar)
@@ -387,6 +453,29 @@ internal sealed class TaskbarBatteryForm : Form
         }
 
         return IntersectionArea(bounds, screen.Bounds) <= 0;
+    }
+
+    private static bool IsExplorerWindow(IntPtr hWnd)
+    {
+        _ = GetWindowThreadProcessId(hWnd, out var processId);
+        if (processId == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById((int)processId);
+            return string.Equals(process.ProcessName, "explorer", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     private static bool IntersectsWithGap(Rectangle first, Rectangle second, int gap)
@@ -638,6 +727,9 @@ internal sealed class TaskbarBatteryForm : Form
 
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out NativeRect lpRect);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern bool SetProp(IntPtr hWnd, string lpString, IntPtr hData);
