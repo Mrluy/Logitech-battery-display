@@ -5,6 +5,7 @@
 
 # Local packaged executables and diagnostics
 /罗技鼠标电量显示.exe
+/Logitech-battery-display.zip
 **/probe-result.txt
 
 # User/local IDE state

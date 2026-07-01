@@ -1,5 +1,7 @@
 # Logitech Battery Display
 
+仅测试适配 G502 X LIGHTSPEED。
+
 一个不依赖 Logitech G HUB 的 Windows 托盘小工具，用 HID++ 直接读取罗技 LIGHTSPEED 接收器上的无线鼠标电量。
 
 ## 使用

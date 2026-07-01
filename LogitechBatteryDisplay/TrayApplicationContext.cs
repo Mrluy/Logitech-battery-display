@@ -112,6 +112,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         menu.Items.Add(_startupMenuItem);
 
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(new ToolStripMenuItem($"版本 {GetApplicationVersion()}")
+        {
+            Enabled = false
+        });
+
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => ExitThread());
         return menu;
     }
@@ -253,6 +259,22 @@ internal sealed class TrayApplicationContext : ApplicationContext
         return slashIndex >= 0 && slashIndex < deviceName.Length - 1
             ? deviceName[(slashIndex + 1)..]
             : deviceName;
+    }
+
+    private static string GetApplicationVersion()
+    {
+        var assembly = typeof(Program).Assembly;
+        var informationalVersion = assembly
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+            .FirstOrDefault()
+            ?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(informationalVersion))
+        {
+            return informationalVersion;
+        }
+
+        return assembly.GetName().Version?.ToString(3) ?? "未知";
     }
 
     private void SetStartWithWindowsEnabled(bool enabled)
