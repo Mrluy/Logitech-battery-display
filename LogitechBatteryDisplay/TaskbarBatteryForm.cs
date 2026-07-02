@@ -20,9 +20,13 @@ internal sealed class TaskbarBatteryForm : Form
     private string? _targetScreenDeviceName;
     private bool _isPinned;
     private string _toolTipText = string.Empty;
+    private Rectangle _lastObservedTaskbar = Rectangle.Empty;
+    private Rectangle _lastObservedAnchor = Rectangle.Empty;
+    private bool _lastObservedAnchorWasNotification;
     private readonly Dictionary<IntPtr, Rectangle> _originalTaskListBounds = new();
     private readonly BatteryToolTipForm _toolTip = new();
     private readonly System.Windows.Forms.Timer _hoverTimer = new() { Interval = 150 };
+    private readonly System.Windows.Forms.Timer _taskbarLayoutTimer = new() { Interval = 500 };
 
     public TaskbarBatteryForm()
     {
@@ -44,6 +48,8 @@ internal sealed class TaskbarBatteryForm : Form
         UpdateToolTipText();
         _hoverTimer.Tick += (_, _) => UpdateHoverToolTip();
         _hoverTimer.Start();
+        _taskbarLayoutTimer.Tick += (_, _) => RepositionIfTaskbarAnchorChanged();
+        _taskbarLayoutTimer.Start();
 
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
         SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
@@ -91,12 +97,14 @@ internal sealed class TaskbarBatteryForm : Form
     {
         _isPinned = false;
         _toolTip.Hide();
+        ResetTaskbarLayoutTracking();
         RestoreReservedTaskLists();
         Hide();
     }
 
     public void SetTargetScreen(string? deviceName)
     {
+        ResetTaskbarLayoutTracking();
         RestoreReservedTaskLists();
         _targetScreenDeviceName = string.IsNullOrWhiteSpace(deviceName) ? null : deviceName;
         if (Visible)
@@ -110,6 +118,7 @@ internal sealed class TaskbarBatteryForm : Form
         var screen = ResolveTargetScreen();
         if (screen is null)
         {
+            ResetTaskbarLayoutTracking();
             RestoreReservedTaskLists();
             Hide();
             return;
@@ -118,6 +127,7 @@ internal sealed class TaskbarBatteryForm : Form
         var taskbar = GetTaskbarBounds(screen);
         if (taskbar.Width <= 0 || taskbar.Height <= 0)
         {
+            ResetTaskbarLayoutTracking();
             RestoreReservedTaskLists();
             var workingArea = screen.WorkingArea;
             ApplyPinnedLocation(new Point(workingArea.Right - Width - 24, workingArea.Bottom - Height - 12));
@@ -126,10 +136,12 @@ internal sealed class TaskbarBatteryForm : Form
 
         if (TryGetTaskbarAnchor(screen, out var taskbarAnchor) && taskbarAnchor.Bounds.Width > 0 && taskbarAnchor.Bounds.Height > 0)
         {
+            RememberTaskbarLayout(taskbar, taskbarAnchor);
             ApplyAvailableTaskbarLocation(GetTaskbarAnchorLocation(taskbarAnchor, taskbar), screen, taskbar);
             return;
         }
 
+        ResetTaskbarLayoutTracking();
         const int reservedRightForTray = 520;
         const int margin = 12;
         if (taskbar.Height <= taskbar.Width)
@@ -201,11 +213,63 @@ internal sealed class TaskbarBatteryForm : Form
 
     private void ApplyPinnedLocation(Point location)
     {
-        Location = location;
+        if (Location != location)
+        {
+            Location = location;
+        }
+
         if (_isPinned && !Visible)
         {
             Show();
         }
+    }
+
+    private void RepositionIfTaskbarAnchorChanged()
+    {
+        if (!_isPinned)
+        {
+            return;
+        }
+
+        var screen = ResolveTargetScreen();
+        if (screen is null)
+        {
+            Reposition();
+            return;
+        }
+
+        var taskbar = GetTaskbarBounds(screen);
+        if (taskbar.Width <= 0 || taskbar.Height <= 0)
+        {
+            Reposition();
+            return;
+        }
+
+        if (!TryGetTaskbarAnchor(screen, out var anchor) || anchor.Bounds.Width <= 0 || anchor.Bounds.Height <= 0)
+        {
+            return;
+        }
+
+        if (_lastObservedTaskbar != taskbar ||
+            _lastObservedAnchor != anchor.Bounds ||
+            _lastObservedAnchorWasNotification != anchor.IsNotificationAnchor)
+        {
+            Reposition();
+        }
+    }
+
+    private void RememberTaskbarLayout(Rectangle taskbar, TaskbarAnchorCandidate anchor)
+    {
+        _lastObservedTaskbar = taskbar;
+        _lastObservedAnchor = anchor.Bounds;
+        _lastObservedAnchorWasNotification = anchor.IsNotificationAnchor;
+    }
+
+    private void ResetTaskbarLayoutTracking()
+    {
+        _lastObservedTaskbar = Rectangle.Empty;
+        _lastObservedAnchor = Rectangle.Empty;
+        _lastObservedAnchorWasNotification = false;
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -255,6 +319,8 @@ internal sealed class TaskbarBatteryForm : Form
             RestoreReservedTaskLists();
             _hoverTimer.Stop();
             _hoverTimer.Dispose();
+            _taskbarLayoutTimer.Stop();
+            _taskbarLayoutTimer.Dispose();
             _toolTip.Dispose();
             SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
             SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
