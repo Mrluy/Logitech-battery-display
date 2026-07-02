@@ -8,11 +8,9 @@ namespace LogitechBatteryDisplay;
 internal sealed class TaskbarBatteryForm : Form
 {
     private static readonly Color Transparent = Color.FromArgb(255, 1, 2, 3);
-    private static readonly Size NormalWindowSize = new(60, 34);
-    private static readonly Size ChargingWindowSize = new(78, 34);
-    private static readonly Rectangle NormalBatteryBounds = new(3, 7, 49, 20);
+    private static readonly Size WindowSize = new(78, 34);
     private static readonly Rectangle ChargingIconBounds = new(3, 8, 13, 18);
-    private static readonly Rectangle ChargingBatteryBounds = new(20, 7, 49, 20);
+    private static readonly Rectangle BatteryBounds = new(20, 7, 49, 20);
     private const string TaskbarWindowMarker = "LogitechBatteryDisplay.TaskbarBatteryWindow";
     private const string ToolTipWindowMarker = "LogitechBatteryDisplay.TaskbarBatteryToolTip";
     private const int CollisionGap = 8;
@@ -35,7 +33,7 @@ internal sealed class TaskbarBatteryForm : Form
         Text = TaskbarWindowMarker;
         Name = TaskbarWindowMarker;
         AccessibleName = TaskbarWindowMarker;
-        Size = NormalWindowSize;
+        Size = WindowSize;
         MinimumSize = Size;
         MaximumSize = Size;
         BackColor = Transparent;
@@ -74,13 +72,12 @@ internal sealed class TaskbarBatteryForm : Form
             return;
         }
 
+        var visualChanged = HasTaskbarVisualChange(_snapshot, snapshot);
         _snapshot = snapshot;
-        var sizeChanged = UpdateWindowSizeForSnapshot();
         UpdateToolTipText();
-        Invalidate();
-        if (sizeChanged && _isPinned)
+        if (visualChanged)
         {
-            Reposition();
+            Invalidate();
         }
     }
 
@@ -237,32 +234,19 @@ internal sealed class TaskbarBatteryForm : Form
         var percent = _snapshot.Percent;
         var accent = AccentFor(_snapshot);
         var percentText = percent is int value ? $"{value}%" : "--%";
-        var batteryBounds = NormalBatteryBounds;
 
         if (IsCharging(_snapshot.ChargeState))
         {
             DrawChargingIcon(e.Graphics, ChargingIconBounds, BatteryColors.ChargingGold);
-            batteryBounds = ChargingBatteryBounds;
         }
 
-        DrawBattery(e.Graphics, batteryBounds, percent, accent, percentText, Font);
+        DrawBattery(e.Graphics, BatteryBounds, percent, accent, percentText, Font);
     }
 
-    private bool UpdateWindowSizeForSnapshot()
-    {
-        var targetSize = IsCharging(_snapshot.ChargeState) ? ChargingWindowSize : NormalWindowSize;
-        if (Size == targetSize)
-        {
-            return false;
-        }
-
-        MinimumSize = Size.Empty;
-        MaximumSize = Size.Empty;
-        Size = targetSize;
-        MinimumSize = targetSize;
-        MaximumSize = targetSize;
-        return true;
-    }
+    private static bool HasTaskbarVisualChange(BatterySnapshot current, BatterySnapshot next) =>
+        current.IsSuccess != next.IsSuccess ||
+        current.Percent != next.Percent ||
+        current.ChargeState != next.ChargeState;
 
     protected override void Dispose(bool disposing)
     {

@@ -164,11 +164,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _latest = snapshot;
             _form.UpdateSnapshot(snapshot);
             UpdateTaskbarBatterySnapshots(snapshot);
-            if (_settings.ShowTaskbarBattery)
-            {
-                RepositionTaskbarBatteryWindows();
-            }
-
             UpdateTray(snapshot);
         }
         finally
@@ -309,15 +304,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
         foreach (var form in _taskbarBatteryForms.Values)
         {
             form.UpdateSnapshot(snapshot);
-        }
-    }
-
-    private void RepositionTaskbarBatteryWindows()
-    {
-        RefreshTaskbarBatteryWindows();
-        foreach (var form in _taskbarBatteryForms.Values)
-        {
-            form.Reposition();
         }
     }
 
