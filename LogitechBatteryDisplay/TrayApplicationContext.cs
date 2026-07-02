@@ -3,6 +3,7 @@ namespace LogitechBatteryDisplay;
 internal sealed class TrayApplicationContext : ApplicationContext
 {
     private static readonly TimeSpan SleepingMouseSnapshotRetention = TimeSpan.FromHours(24);
+    private const int RefreshIntervalMs = 1_000;
     private readonly LogitechBatteryReader _reader = new();
     private readonly NotifyIcon _notifyIcon;
     private readonly BatteryStatusForm _form;
@@ -82,7 +83,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         _timer = new System.Windows.Forms.Timer
         {
-            Interval = 15_000
+            Interval = RefreshIntervalMs
         };
         _timer.Tick += async (_, _) => await RefreshAsync();
         _timer.Start();
