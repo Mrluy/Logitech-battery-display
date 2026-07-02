@@ -2,7 +2,7 @@ namespace LogitechBatteryDisplay;
 
 internal static class BatteryColors
 {
-    public static readonly Color ChargingGold = Color.FromArgb(255, 203, 75);
+    public static readonly Color ChargingGold = Color.FromArgb(255, 220, 4);
     public static readonly Color OfflineGray = Color.FromArgb(145, 155, 163);
 
     public static Color For(int? percent, BatteryChargeState state)
