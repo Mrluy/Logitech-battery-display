@@ -189,7 +189,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         if (!snapshot.IsSuccess && IsLastReadableSnapshotFresh())
         {
-            return _lastReadableSnapshot!;
+            return BuildSleepingMouseSnapshot(_lastReadableSnapshot!);
         }
 
         if (_lastReadableSnapshot is not null && !IsLastReadableSnapshotFresh())
@@ -199,6 +199,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         return snapshot;
     }
+
+    private static BatterySnapshot BuildSleepingMouseSnapshot(BatterySnapshot snapshot) =>
+        snapshot with
+        {
+            IsSuccess = false,
+            ChargeState = BatteryChargeState.Unknown,
+            Message = "鼠标休眠或离线"
+        };
 
     private bool IsLastReadableSnapshotFresh()
     {

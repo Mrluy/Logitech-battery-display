@@ -228,10 +228,17 @@ internal sealed class TaskbarBatteryForm : Form
         e.Graphics.Clear(Transparent);
 
         var percent = _snapshot.Percent;
-        var accent = AccentFor(percent, _snapshot.ChargeState);
+        var accent = AccentFor(_snapshot);
         var percentText = percent is int value ? $"{value}%" : "--%";
+        var batteryBounds = new Rectangle(3, 7, 49, 20);
 
-        DrawBattery(e.Graphics, new Rectangle(3, 7, 49, 20), percent, accent, percentText, Font);
+        if (IsCharging(_snapshot.ChargeState))
+        {
+            DrawChargingIcon(e.Graphics, new Rectangle(2, 8, 13, 18), BatteryColors.ChargingGold);
+            batteryBounds = new Rectangle(17, 7, 35, 20);
+        }
+
+        DrawBattery(e.Graphics, batteryBounds, percent, accent, percentText, Font);
     }
 
     protected override void Dispose(bool disposing)
@@ -968,6 +975,31 @@ internal sealed class TaskbarBatteryForm : Form
         graphics.FillPath(fill, path);
     }
 
+    private static void DrawChargingIcon(Graphics graphics, Rectangle bounds, Color color)
+    {
+        // Points are taken from charging.svg and scaled into the taskbar battery window.
+        var source = new[]
+        {
+            new PointF(568.917333F, 153.6F),
+            new PointF(568.917333F, 450.389333F),
+            new PointF(682.666667F, 450.389333F),
+            new PointF(455.082667F, 870.4F),
+            new PointF(455.082667F, 567.978667F),
+            new PointF(341.333333F, 567.978667F)
+        };
+        var sourceBounds = RectangleF.FromLTRB(341.333333F, 153.6F, 682.666667F, 870.4F);
+        var scale = Math.Min(bounds.Width / sourceBounds.Width, bounds.Height / sourceBounds.Height);
+        var scaledWidth = sourceBounds.Width * scale;
+        var scaledHeight = sourceBounds.Height * scale;
+        var offsetX = bounds.Left + (bounds.Width - scaledWidth) / 2F - sourceBounds.Left * scale;
+        var offsetY = bounds.Top + (bounds.Height - scaledHeight) / 2F - sourceBounds.Top * scale;
+
+        using var icon = new GraphicsPath();
+        icon.AddPolygon(source.Select(point => new PointF(point.X * scale + offsetX, point.Y * scale + offsetY)).ToArray());
+        using var brush = new SolidBrush(color);
+        graphics.FillPath(brush, icon);
+    }
+
     private static Font CreateFittedPercentFont(Graphics graphics, Rectangle bounds, string text, Font baseFont)
     {
         const float minimumSize = 6.8F;
@@ -1005,25 +1037,33 @@ internal sealed class TaskbarBatteryForm : Form
         return path;
     }
 
-    private static Color AccentFor(int? percent, BatteryChargeState state)
+    private static Color AccentFor(BatterySnapshot snapshot)
     {
-        if (state is BatteryChargeState.Recharging or BatteryChargeState.SlowRecharge)
+        if (!snapshot.IsSuccess)
         {
-            return Color.FromArgb(92, 170, 255);
+            return BatteryColors.OfflineGray;
         }
 
-        if (percent is null)
+        if (IsCharging(snapshot.ChargeState))
         {
-            return Color.FromArgb(168, 178, 187);
+            return BatteryColors.ChargingGold;
         }
 
-        return percent.Value switch
+        if (snapshot.Percent is null)
+        {
+            return BatteryColors.OfflineGray;
+        }
+
+        return snapshot.Percent.Value switch
         {
             <= 15 => Color.FromArgb(255, 99, 87),
             <= 35 => Color.FromArgb(255, 176, 73),
             _ => Color.FromArgb(45, 214, 129)
         };
     }
+
+    private static bool IsCharging(BatteryChargeState state) =>
+        state is BatteryChargeState.Recharging or BatteryChargeState.SlowRecharge;
 
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 

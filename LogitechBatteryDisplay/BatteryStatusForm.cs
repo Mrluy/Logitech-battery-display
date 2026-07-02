@@ -75,7 +75,7 @@ internal sealed class BatteryStatusForm : Form
         _title.Text = snapshot.IsSuccess ? "罗技无线鼠标" : "罗技鼠标电量";
         _device.Text = snapshot.DeviceName;
         _percent.Text = percentText;
-        _percent.ForeColor = Palette.AccentFor(snapshot.Percent, snapshot.ChargeState);
+        _percent.ForeColor = Palette.AccentFor(snapshot);
         _statusChip.SetText(HumanizeState(snapshot), snapshot.IsSuccess ? Palette.ChipText : Palette.Warning);
         _updatedValue.Text = snapshot.Timestamp.ToString("HH:mm:ss");
         _gauge.UpdateSnapshot(snapshot);
@@ -101,7 +101,7 @@ internal sealed class BatteryStatusForm : Form
             LinearGradientMode.Vertical);
         e.Graphics.FillRectangle(glow, 1, 1, Width - 2, Height - 2);
 
-        using var dot = new SolidBrush(Palette.AccentFor(_snapshot.Percent, _snapshot.ChargeState));
+        using var dot = new SolidBrush(Palette.AccentFor(_snapshot));
         e.Graphics.FillEllipse(dot, 22, 25, 8, 8);
 
         DrawInfoPanel(e.Graphics, new Rectangle(22, 190, 328, 38));
@@ -385,7 +385,7 @@ internal sealed class BatteryStatusForm : Form
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             var percent = _snapshot.Percent;
-            var accent = Palette.AccentFor(percent, _snapshot.ChargeState);
+            var accent = Palette.AccentFor(_snapshot);
             DrawBattery(e.Graphics, new Rectangle(4, 13, 136, 52), percent, accent);
         }
 
@@ -447,19 +447,24 @@ internal sealed class BatteryStatusForm : Form
         public static readonly Color ButtonHover = Color.FromArgb(50, 56, 62);
         public static readonly Color BatteryOutline = Color.FromArgb(206, 215, 218);
 
-        public static Color AccentFor(int? percent, BatteryChargeState state)
+        public static Color AccentFor(BatterySnapshot snapshot)
         {
-            if (state is BatteryChargeState.Recharging or BatteryChargeState.SlowRecharge)
+            if (!snapshot.IsSuccess)
             {
-                return Color.FromArgb(92, 170, 255);
+                return BatteryColors.OfflineGray;
             }
 
-            if (percent is null)
+            if (snapshot.ChargeState is BatteryChargeState.Recharging or BatteryChargeState.SlowRecharge)
             {
-                return Color.FromArgb(151, 161, 170);
+                return BatteryColors.ChargingGold;
             }
 
-            return percent.Value switch
+            if (snapshot.Percent is null)
+            {
+                return BatteryColors.OfflineGray;
+            }
+
+            return snapshot.Percent.Value switch
             {
                 <= 15 => Color.FromArgb(255, 99, 87),
                 <= 35 => Color.FromArgb(255, 176, 73),
