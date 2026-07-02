@@ -6,7 +6,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly LogitechBatteryReader _reader = new();
     private readonly NotifyIcon _notifyIcon;
     private readonly BatteryStatusForm _form;
-    private readonly TaskbarBatteryForm _taskbarBatteryForm;
+    private readonly Dictionary<string, TaskbarBatteryForm> _taskbarBatteryForms = new(StringComparer.OrdinalIgnoreCase);
     private readonly System.Windows.Forms.Timer _timer;
     private readonly Icon _trayIcon;
     private readonly Icon _windowIcon;
@@ -65,10 +65,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
             -1,
             false);
 
-        _taskbarBatteryForm = new TaskbarBatteryForm();
-        _taskbarBatteryForm.SetTargetScreen(_settings.TaskbarBatteryScreenDeviceName);
-        _taskbarBatteryForm.UpdateSnapshot(_latest);
-
         _notifyIcon = new NotifyIcon
         {
             Text = "罗技鼠标电量",
@@ -80,7 +76,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         if (_settings.ShowTaskbarBattery)
         {
-            _taskbarBatteryForm.ShowPinned();
+            EnsureTaskbarBatteryScreenSelection();
+            RefreshTaskbarBatteryWindows();
         }
 
         _timer = new System.Windows.Forms.Timer
@@ -165,10 +162,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var snapshot = ApplySleepingMouseFallback(await Task.Run(_reader.ReadBattery));
             _latest = snapshot;
             _form.UpdateSnapshot(snapshot);
-            _taskbarBatteryForm.UpdateSnapshot(snapshot);
+            UpdateTaskbarBatterySnapshots(snapshot);
             if (_settings.ShowTaskbarBattery)
             {
-                _taskbarBatteryForm.Reposition();
+                RepositionTaskbarBatteryWindows();
             }
 
             UpdateTray(snapshot);
@@ -229,6 +226,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private void SetTaskbarBatteryWindowEnabled(bool enabled)
     {
         _settings.ShowTaskbarBattery = enabled;
+        if (enabled)
+        {
+            EnsureTaskbarBatteryScreenSelection();
+        }
+
         _settings.Save();
 
         if (_taskbarBatteryMenuItem is not null)
@@ -236,26 +238,117 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _taskbarBatteryMenuItem.Checked = enabled;
         }
 
+        RefreshTaskbarScreenMenu();
+        RefreshTaskbarBatteryWindows();
+    }
+
+    private void SetAllTaskbarBatteryScreens()
+    {
+        var screens = GetSortedScreens();
+        _settings.SetTaskbarBatteryScreenDeviceNames(screens.Select(screen => screen.DeviceName));
+        _settings.ShowTaskbarBattery = screens.Length > 0;
+        _settings.Save();
+        UpdateTaskbarBatteryMenuCheckedState();
+        RefreshTaskbarScreenMenu();
+        RefreshTaskbarBatteryWindows();
+    }
+
+    private void SetTaskbarBatteryScreenEnabled(string deviceName, bool enabled)
+    {
+        var selected = _settings.TaskbarBatteryScreenDeviceNames.ToList();
         if (enabled)
         {
-            _taskbarBatteryForm.UpdateSnapshot(_latest);
-            _taskbarBatteryForm.ShowPinned();
+            if (!selected.Contains(deviceName, StringComparer.OrdinalIgnoreCase))
+            {
+                selected.Add(deviceName);
+            }
+
+            _settings.ShowTaskbarBattery = true;
+        }
+        else
+        {
+            selected.RemoveAll(name => string.Equals(name, deviceName, StringComparison.OrdinalIgnoreCase));
+            if (selected.Count == 0)
+            {
+                _settings.ShowTaskbarBattery = false;
+            }
+        }
+
+        _settings.SetTaskbarBatteryScreenDeviceNames(selected);
+        _settings.Save();
+        UpdateTaskbarBatteryMenuCheckedState();
+        RefreshTaskbarScreenMenu();
+        RefreshTaskbarBatteryWindows();
+    }
+
+    private void EnsureTaskbarBatteryScreenSelection()
+    {
+        if (_settings.TaskbarBatteryScreenDeviceNames.Count > 0)
+        {
             return;
         }
 
-        _taskbarBatteryForm.HidePinned();
+        var primary = Screen.PrimaryScreen ?? Screen.AllScreens.FirstOrDefault();
+        if (primary is not null)
+        {
+            _settings.SetTaskbarBatteryScreenDeviceNames([primary.DeviceName]);
+        }
     }
 
-    private void SetTaskbarBatteryScreen(string? deviceName)
+    private void UpdateTaskbarBatteryMenuCheckedState()
     {
-        _settings.TaskbarBatteryScreenDeviceName = string.IsNullOrWhiteSpace(deviceName) ? null : deviceName;
-        _settings.Save();
-        _taskbarBatteryForm.SetTargetScreen(_settings.TaskbarBatteryScreenDeviceName);
-        RefreshTaskbarScreenMenu();
-
-        if (_settings.ShowTaskbarBattery)
+        if (_taskbarBatteryMenuItem is not null)
         {
-            _taskbarBatteryForm.ShowPinned();
+            _taskbarBatteryMenuItem.Checked = _settings.ShowTaskbarBattery;
+        }
+    }
+
+    private void UpdateTaskbarBatterySnapshots(BatterySnapshot snapshot)
+    {
+        foreach (var form in _taskbarBatteryForms.Values)
+        {
+            form.UpdateSnapshot(snapshot);
+        }
+    }
+
+    private void RepositionTaskbarBatteryWindows()
+    {
+        RefreshTaskbarBatteryWindows();
+        foreach (var form in _taskbarBatteryForms.Values)
+        {
+            form.Reposition();
+        }
+    }
+
+    private void RefreshTaskbarBatteryWindows()
+    {
+        var desired = _settings.ShowTaskbarBattery
+            ? _settings.TaskbarBatteryScreenDeviceNames.ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : [];
+
+        foreach (var item in _taskbarBatteryForms.ToArray())
+        {
+            if (desired.Contains(item.Key))
+            {
+                continue;
+            }
+
+            item.Value.HidePinned();
+            item.Value.Dispose();
+            _taskbarBatteryForms.Remove(item.Key);
+        }
+
+        foreach (var deviceName in desired.OrderBy(GetDisplaySortKey))
+        {
+            if (!_taskbarBatteryForms.TryGetValue(deviceName, out var form))
+            {
+                form = new TaskbarBatteryForm();
+                form.SetTargetScreen(deviceName);
+                _taskbarBatteryForms.Add(deviceName, form);
+            }
+
+            form.UpdateSnapshot(_latest);
+            form.ShowPinned();
         }
     }
 
@@ -267,19 +360,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
 
         _taskbarScreenMenuItem.DropDownItems.Clear();
-        var selectedDeviceName = _settings.TaskbarBatteryScreenDeviceName;
-        var screens = Screen.AllScreens
-            .OrderBy(GetDisplaySortKey)
-            .ThenBy(screen => screen.Bounds.Left)
-            .ThenBy(screen => screen.Bounds.Top)
-            .ToArray();
+        var selectedDeviceNames = _settings.TaskbarBatteryScreenDeviceNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var screens = GetSortedScreens();
+        var currentScreenNames = screens.Select(screen => screen.DeviceName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var allCurrentSelected = screens.Length > 0 && screens.All(screen => selectedDeviceNames.Contains(screen.DeviceName));
 
-        var followPrimaryItem = new ToolStripMenuItem("跟随主显示器")
+        var allScreensItem = new ToolStripMenuItem("全部当前显示器")
         {
-            Checked = string.IsNullOrWhiteSpace(selectedDeviceName)
+            Checked = allCurrentSelected
         };
-        followPrimaryItem.Click += (_, _) => SetTaskbarBatteryScreen(null);
-        _taskbarScreenMenuItem.DropDownItems.Add(followPrimaryItem);
+        allScreensItem.Click += (_, _) => SetAllTaskbarBatteryScreens();
+        _taskbarScreenMenuItem.DropDownItems.Add(allScreensItem);
 
         if (screens.Length > 0)
         {
@@ -292,10 +383,28 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var deviceName = screen.DeviceName;
             var item = new ToolStripMenuItem(BuildScreenMenuLabel(screen))
             {
-                Checked = string.Equals(selectedDeviceName, deviceName, StringComparison.OrdinalIgnoreCase)
+                Checked = selectedDeviceNames.Contains(deviceName)
             };
-            item.Click += (_, _) => SetTaskbarBatteryScreen(deviceName);
+            item.Click += (_, _) => SetTaskbarBatteryScreenEnabled(deviceName, !item.Checked);
             _taskbarScreenMenuItem.DropDownItems.Add(item);
+        }
+
+        var unavailableDeviceNames = selectedDeviceNames
+            .Where(deviceName => !currentScreenNames.Contains(deviceName))
+            .OrderBy(GetDisplaySortKey)
+            .ToArray();
+        if (unavailableDeviceNames.Length > 0)
+        {
+            _taskbarScreenMenuItem.DropDownItems.Add(new ToolStripSeparator());
+            foreach (var deviceName in unavailableDeviceNames)
+            {
+                var item = new ToolStripMenuItem($"{ShortDeviceName(deviceName)}（未连接）")
+                {
+                    Checked = true
+                };
+                item.Click += (_, _) => SetTaskbarBatteryScreenEnabled(deviceName, enabled: false);
+                _taskbarScreenMenuItem.DropDownItems.Add(item);
+            }
         }
 
         _taskbarScreenMenuItem.Enabled = _taskbarScreenMenuItem.DropDownItems.Count > 0;
@@ -310,6 +419,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
         return $"{displayLabel}{primarySuffix} - {ShortDeviceName(screen.DeviceName)} {screen.Bounds.Width}x{screen.Bounds.Height}";
     }
 
+    private static Screen[] GetSortedScreens()
+    {
+        return Screen.AllScreens
+            .OrderBy(GetDisplaySortKey)
+            .ThenBy(screen => screen.Bounds.Left)
+            .ThenBy(screen => screen.Bounds.Top)
+            .ToArray();
+    }
+
     private static string ShortDeviceName(string deviceName)
     {
         var slashIndex = deviceName.LastIndexOf('\\');
@@ -320,7 +438,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private static int GetDisplaySortKey(Screen screen)
     {
-        return TryGetDisplayNumber(screen.DeviceName, out var displayNumber)
+        return GetDisplaySortKey(screen.DeviceName);
+    }
+
+    private static int GetDisplaySortKey(string deviceName)
+    {
+        return TryGetDisplayNumber(deviceName, out var displayNumber)
             ? displayNumber
             : int.MaxValue;
     }
@@ -390,7 +513,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _showWindowEvent.Dispose();
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
-        _taskbarBatteryForm.Dispose();
+        foreach (var form in _taskbarBatteryForms.Values)
+        {
+            form.Dispose();
+        }
+
+        _taskbarBatteryForms.Clear();
         _form.Dispose();
         _windowIcon.Dispose();
         _trayIcon.Dispose();

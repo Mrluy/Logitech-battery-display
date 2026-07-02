@@ -13,6 +13,8 @@ internal sealed class AppSettings
 
     public string? TaskbarBatteryScreenDeviceName { get; set; }
 
+    public List<string> TaskbarBatteryScreenDeviceNames { get; set; } = [];
+
     public bool StartWithWindows { get; set; }
 
     public static AppSettings Load()
@@ -25,7 +27,9 @@ internal sealed class AppSettings
             }
 
             var json = File.ReadAllText(SettingsPath);
-            return JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+            var settings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+            settings.Normalize();
+            return settings;
         }
         catch
         {
@@ -35,8 +39,35 @@ internal sealed class AppSettings
 
     public void Save()
     {
+        Normalize();
         Directory.CreateDirectory(SettingsDirectory);
         File.WriteAllText(SettingsPath, JsonSerializer.Serialize(this, JsonOptions));
+    }
+
+    public void SetTaskbarBatteryScreenDeviceNames(IEnumerable<string> deviceNames)
+    {
+        TaskbarBatteryScreenDeviceNames = NormalizeDeviceNames(deviceNames);
+        TaskbarBatteryScreenDeviceName = TaskbarBatteryScreenDeviceNames.FirstOrDefault();
+    }
+
+    private void Normalize()
+    {
+        TaskbarBatteryScreenDeviceNames = NormalizeDeviceNames(TaskbarBatteryScreenDeviceNames);
+        if (TaskbarBatteryScreenDeviceNames.Count == 0 && !string.IsNullOrWhiteSpace(TaskbarBatteryScreenDeviceName))
+        {
+            TaskbarBatteryScreenDeviceNames.Add(TaskbarBatteryScreenDeviceName.Trim());
+        }
+
+        TaskbarBatteryScreenDeviceName = TaskbarBatteryScreenDeviceNames.FirstOrDefault();
+    }
+
+    private static List<string> NormalizeDeviceNames(IEnumerable<string>? deviceNames)
+    {
+        return deviceNames?
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
     }
 
     private static string SettingsDirectory =>

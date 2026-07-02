@@ -104,6 +104,8 @@ internal sealed class TaskbarBatteryForm : Form
         var screen = ResolveTargetScreen();
         if (screen is null)
         {
+            RestoreReservedTaskLists();
+            Hide();
             return;
         }
 
@@ -152,12 +154,8 @@ internal sealed class TaskbarBatteryForm : Form
         var screens = Screen.AllScreens;
         if (!string.IsNullOrWhiteSpace(_targetScreenDeviceName))
         {
-            var selected = screens.FirstOrDefault(screen =>
+            return screens.FirstOrDefault(screen =>
                 string.Equals(screen.DeviceName, _targetScreenDeviceName, StringComparison.OrdinalIgnoreCase));
-            if (selected is not null)
-            {
-                return selected;
-            }
         }
 
         return Screen.PrimaryScreen ?? screens.FirstOrDefault();
