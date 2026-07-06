@@ -201,18 +201,23 @@ internal sealed class BatteryHistoryForm : Form
         private IReadOnlyList<BatteryHistoryEntry> _entries = [];
         private DateTimeOffset _since;
         private DateTimeOffset _until;
+        private int _selectedIndex = -1;
+        private bool _isDraggingSelection;
 
         public BatteryHistoryChart()
         {
             DoubleBuffered = true;
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
+            Cursor = Cursors.Cross;
         }
 
         public void SetData(IReadOnlyList<BatteryHistoryEntry> entries, DateTimeOffset since, DateTimeOffset until)
         {
+            var selectedTime = SelectedEntry?.RecordedAt;
             _entries = entries;
             _since = since;
             _until = until;
+            _selectedIndex = ResolveSelectedIndex(selectedTime);
             Invalidate();
         }
 
@@ -225,12 +230,68 @@ internal sealed class BatteryHistoryForm : Form
             using var border = new Pen(HistoryPalette.Border, 1F);
             e.Graphics.DrawRectangle(border, bounds);
 
-            var plot = new Rectangle(54, 24, Math.Max(80, Width - 78), Math.Max(120, Height - 92));
+            var plot = GetPlotRectangle();
             DrawGrid(e.Graphics, plot);
             DrawStateBand(e.Graphics, plot);
             DrawPercentLine(e.Graphics, plot);
+            DrawSelection(e.Graphics, plot);
             DrawAxisText(e.Graphics, plot);
             DrawLegend(e.Graphics);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button != MouseButtons.Left || _entries.Count == 0)
+            {
+                return;
+            }
+
+            var plot = GetPlotRectangle();
+            var band = GetStateBandRectangle(plot);
+            if (!plot.Contains(e.Location) && !band.Contains(e.Location) && !IsNearSelectedLine(plot, e.X))
+            {
+                return;
+            }
+
+            Capture = true;
+            _isDraggingSelection = true;
+            SelectNearestEntry(plot, e.X);
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            if (_isDraggingSelection && _entries.Count > 0)
+            {
+                SelectNearestEntry(GetPlotRectangle(), e.X);
+                return;
+            }
+
+            var plot = GetPlotRectangle();
+            var band = GetStateBandRectangle(plot);
+            Cursor = plot.Contains(e.Location) || band.Contains(e.Location) || IsNearSelectedLine(plot, e.X)
+                ? Cursors.SizeWE
+                : Cursors.Cross;
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (e.Button == MouseButtons.Left)
+            {
+                _isDraggingSelection = false;
+                Capture = false;
+            }
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            base.OnMouseLeave(e);
+            if (!_isDraggingSelection)
+            {
+                Cursor = Cursors.Cross;
+            }
         }
 
         private void DrawGrid(Graphics graphics, Rectangle plot)
@@ -264,38 +325,51 @@ internal sealed class BatteryHistoryForm : Form
                 return;
             }
 
-            using var linePen = new Pen(HistoryPalette.PercentLine, 2.2F)
-            {
-                LineJoin = LineJoin.Round,
-                StartCap = LineCap.Round,
-                EndCap = LineCap.Round
-            };
+            using var chargingPen = CreateLinePen(HistoryPalette.Charging);
+            using var usingPen = CreateLinePen(HistoryPalette.Using);
+            using var sleepingPen = CreateLinePen(HistoryPalette.Sleeping);
+            using var unknownPen = CreateLinePen(HistoryPalette.UnknownLine);
             var step = Math.Max(1, _entries.Count / Math.Max(1, plot.Width * 2));
-            using var path = new GraphicsPath();
+            BatteryHistoryEntry? lastEntry = null;
             PointF? lastPoint = null;
 
             for (var index = 0; index < _entries.Count; index += step)
             {
-                var entry = _entries[index];
-                if (entry.Percent is not int percent)
-                {
-                    lastPoint = null;
-                    continue;
-                }
-
-                var point = new PointF(TimeToX(plot, entry.RecordedAt), PercentToY(plot, percent));
-                if (lastPoint is PointF previous)
-                {
-                    path.AddLine(previous, point);
-                }
-
-                lastPoint = point;
+                DrawPercentLinePoint(graphics, plot, _entries[index], ref lastEntry, ref lastPoint, chargingPen, usingPen, sleepingPen, unknownPen);
             }
 
-            if (path.PointCount > 1)
+            if ((_entries.Count - 1) % step != 0)
             {
-                graphics.DrawPath(linePen, path);
+                DrawPercentLinePoint(graphics, plot, _entries[^1], ref lastEntry, ref lastPoint, chargingPen, usingPen, sleepingPen, unknownPen);
             }
+        }
+
+        private void DrawPercentLinePoint(
+            Graphics graphics,
+            Rectangle plot,
+            BatteryHistoryEntry entry,
+            ref BatteryHistoryEntry? lastEntry,
+            ref PointF? lastPoint,
+            Pen chargingPen,
+            Pen usingPen,
+            Pen sleepingPen,
+            Pen unknownPen)
+        {
+            if (entry.Percent is not int percent)
+            {
+                lastEntry = null;
+                lastPoint = null;
+                return;
+            }
+
+            var point = new PointF(TimeToX(plot, entry.RecordedAt), PercentToY(plot, percent));
+            if (lastEntry is not null && lastPoint is PointF previous)
+            {
+                graphics.DrawLine(PenFor(entry.StateGroup, chargingPen, usingPen, sleepingPen, unknownPen), previous, point);
+            }
+
+            lastEntry = entry;
+            lastPoint = point;
         }
 
         private void DrawStateBand(Graphics graphics, Rectangle plot)
@@ -305,7 +379,7 @@ internal sealed class BatteryHistoryForm : Form
                 return;
             }
 
-            var band = new Rectangle(plot.Left, plot.Bottom + 18, plot.Width, 16);
+            var band = GetStateBandRectangle(plot);
             using var border = new Pen(HistoryPalette.Border, 1F);
             using var chargingBrush = new SolidBrush(HistoryPalette.Charging);
             using var usingBrush = new SolidBrush(HistoryPalette.Using);
@@ -351,6 +425,60 @@ internal sealed class BatteryHistoryForm : Form
             }
 
             graphics.DrawRectangle(border, band);
+        }
+
+        private void DrawSelection(Graphics graphics, Rectangle plot)
+        {
+            var selected = SelectedEntry;
+            if (selected is null)
+            {
+                return;
+            }
+
+            var band = GetStateBandRectangle(plot);
+            var x = TimeToX(plot, selected.RecordedAt);
+            var stateColor = ColorFor(selected.StateGroup);
+            using var linePen = new Pen(HistoryPalette.SelectionLine, 1F);
+            using var pointFill = new SolidBrush(HistoryPalette.Surface);
+            using var pointBorder = new Pen(stateColor, 1.4F);
+
+            graphics.DrawLine(linePen, x, plot.Top, x, band.Bottom);
+            if (selected.Percent is int percent)
+            {
+                var y = PercentToY(plot, percent);
+                graphics.FillEllipse(pointFill, x - 4F, y - 4F, 8F, 8F);
+                graphics.DrawEllipse(pointBorder, x - 4F, y - 4F, 8F, 8F);
+            }
+
+            DrawSelectionLabel(graphics, plot, selected, x, stateColor);
+        }
+
+        private void DrawSelectionLabel(Graphics graphics, Rectangle plot, BatteryHistoryEntry selected, float markerX, Color stateColor)
+        {
+            var percentText = selected.Percent is int percent ? $"{percent}%" : "未知";
+            var text = $"{selected.RecordedAt:MM-dd HH:mm:ss}  {percentText}  {StateText(selected.StateGroup)}";
+            var textSize = TextRenderer.MeasureText(graphics, text, Font, Size.Empty, TextFormatFlags.NoPadding);
+            var labelWidth = Math.Min(plot.Width - 12, textSize.Width + 18);
+            var labelHeight = 24;
+            var labelX = (int)Math.Round(markerX + 10);
+            if (labelX + labelWidth > plot.Right - 6)
+            {
+                labelX = (int)Math.Round(markerX - labelWidth - 10);
+            }
+
+            labelX = Math.Clamp(labelX, plot.Left + 6, Math.Max(plot.Left + 6, plot.Right - labelWidth - 6));
+            var labelBounds = new Rectangle(labelX, plot.Top + 8, labelWidth, labelHeight);
+            using var fill = new SolidBrush(HistoryPalette.SelectionPanel);
+            using var border = new Pen(stateColor, 1F);
+            graphics.FillRectangle(fill, labelBounds);
+            graphics.DrawRectangle(border, labelBounds);
+            TextRenderer.DrawText(
+                graphics,
+                text,
+                Font,
+                new Rectangle(labelBounds.Left + 9, labelBounds.Top + 1, labelBounds.Width - 18, labelBounds.Height - 2),
+                HistoryPalette.PrimaryText,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
         }
 
         private void DrawAxisText(Graphics graphics, Rectangle plot)
@@ -410,6 +538,87 @@ internal sealed class BatteryHistoryForm : Form
             graphics.FillRectangle(brush, left, band.Top, right - left, band.Height);
         }
 
+        private BatteryHistoryEntry? SelectedEntry =>
+            _selectedIndex >= 0 && _selectedIndex < _entries.Count ? _entries[_selectedIndex] : null;
+
+        private Rectangle GetPlotRectangle() =>
+            new(54, 24, Math.Max(80, Width - 78), Math.Max(120, Height - 92));
+
+        private static Rectangle GetStateBandRectangle(Rectangle plot) =>
+            new(plot.Left, plot.Bottom + 18, plot.Width, 16);
+
+        private int ResolveSelectedIndex(DateTimeOffset? selectedTime)
+        {
+            if (_entries.Count == 0)
+            {
+                return -1;
+            }
+
+            return selectedTime is DateTimeOffset time ? FindNearestEntryIndex(time) : _entries.Count - 1;
+        }
+
+        private void SelectNearestEntry(Rectangle plot, int x)
+        {
+            var selectedTime = TimeFromX(plot, x);
+            var index = FindNearestEntryIndex(selectedTime);
+            if (index == _selectedIndex)
+            {
+                return;
+            }
+
+            _selectedIndex = index;
+            Invalidate();
+        }
+
+        private int FindNearestEntryIndex(DateTimeOffset time)
+        {
+            if (_entries.Count == 0)
+            {
+                return -1;
+            }
+
+            var targetTicks = time.UtcTicks;
+            var low = 0;
+            var high = _entries.Count - 1;
+            while (low <= high)
+            {
+                var mid = low + ((high - low) / 2);
+                var midTicks = _entries[mid].RecordedAt.UtcTicks;
+                if (midTicks < targetTicks)
+                {
+                    low = mid + 1;
+                }
+                else if (midTicks > targetTicks)
+                {
+                    high = mid - 1;
+                }
+                else
+                {
+                    return mid;
+                }
+            }
+
+            if (low <= 0)
+            {
+                return 0;
+            }
+
+            if (low >= _entries.Count)
+            {
+                return _entries.Count - 1;
+            }
+
+            var previousDelta = Math.Abs(targetTicks - _entries[low - 1].RecordedAt.UtcTicks);
+            var nextDelta = Math.Abs(_entries[low].RecordedAt.UtcTicks - targetTicks);
+            return previousDelta <= nextDelta ? low - 1 : low;
+        }
+
+        private bool IsNearSelectedLine(Rectangle plot, int x)
+        {
+            var selected = SelectedEntry;
+            return selected is not null && Math.Abs(TimeToX(plot, selected.RecordedAt) - x) <= 8F;
+        }
+
         private static Brush BrushFor(string stateGroup, Brush chargingBrush, Brush usingBrush, Brush sleepingBrush) =>
             stateGroup switch
             {
@@ -417,6 +626,48 @@ internal sealed class BatteryHistoryForm : Form
                 BatteryHistoryStateGroups.Sleeping => sleepingBrush,
                 _ => usingBrush
             };
+
+        private static Pen CreateLinePen(Color color) =>
+            new(color, 1.1F)
+            {
+                LineJoin = LineJoin.Round,
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round
+            };
+
+        private static Pen PenFor(string stateGroup, Pen chargingPen, Pen usingPen, Pen sleepingPen, Pen unknownPen) =>
+            stateGroup switch
+            {
+                BatteryHistoryStateGroups.Charging => chargingPen,
+                BatteryHistoryStateGroups.Sleeping => sleepingPen,
+                BatteryHistoryStateGroups.Using => usingPen,
+                _ => unknownPen
+            };
+
+        private static Color ColorFor(string stateGroup) =>
+            stateGroup switch
+            {
+                BatteryHistoryStateGroups.Charging => HistoryPalette.Charging,
+                BatteryHistoryStateGroups.Sleeping => HistoryPalette.Sleeping,
+                BatteryHistoryStateGroups.Using => HistoryPalette.Using,
+                _ => HistoryPalette.UnknownLine
+            };
+
+        private static string StateText(string stateGroup) =>
+            stateGroup switch
+            {
+                BatteryHistoryStateGroups.Charging => "充电",
+                BatteryHistoryStateGroups.Sleeping => "休眠/离线",
+                BatteryHistoryStateGroups.Using => "使用",
+                _ => "未知"
+            };
+
+        private DateTimeOffset TimeFromX(Rectangle plot, int x)
+        {
+            var total = Math.Max(1, (_until - _since).TotalMilliseconds);
+            var offset = Math.Clamp((x - plot.Left) / (double)Math.Max(1, plot.Width), 0D, 1D);
+            return _since.AddMilliseconds(total * offset);
+        }
     }
 
     private static class HistoryPalette
@@ -434,5 +685,8 @@ internal sealed class BatteryHistoryForm : Form
         public static readonly Color Charging = Color.FromArgb(255, 220, 4);
         public static readonly Color Using = Color.FromArgb(45, 214, 129);
         public static readonly Color Sleeping = Color.FromArgb(145, 155, 163);
+        public static readonly Color UnknownLine = Color.FromArgb(112, 122, 132);
+        public static readonly Color SelectionLine = Color.FromArgb(230, 245, 249, 252);
+        public static readonly Color SelectionPanel = Color.FromArgb(235, 22, 25, 29);
     }
 }
