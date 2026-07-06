@@ -7,6 +7,9 @@
 /罗技鼠标电量显示.exe
 /Logitech-battery-display.zip
 **/probe-result.txt
+/settings.json
+/battery-history.sqlite
+/battery-history.sqlite-*
 
 # User/local IDE state
 *.user

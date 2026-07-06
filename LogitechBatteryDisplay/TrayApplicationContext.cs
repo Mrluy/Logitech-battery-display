@@ -1,3 +1,5 @@
+using Microsoft.Data.Sqlite;
+
 namespace LogitechBatteryDisplay;
 
 internal sealed class TrayApplicationContext : ApplicationContext
@@ -7,6 +9,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly LogitechBatteryReader _reader = new();
     private readonly NotifyIcon _notifyIcon;
     private readonly BatteryStatusForm _form;
+    private readonly BatteryHistoryStore _historyStore;
     private readonly Dictionary<string, TaskbarBatteryForm> _taskbarBatteryForms = new(StringComparer.OrdinalIgnoreCase);
     private readonly System.Windows.Forms.Timer _timer;
     private readonly Icon _trayIcon;
@@ -17,7 +20,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private ToolStripMenuItem? _taskbarBatteryMenuItem;
     private ToolStripMenuItem? _taskbarScreenMenuItem;
     private ToolStripMenuItem? _startupMenuItem;
+    private BatteryHistoryForm? _historyForm;
     private bool _isRefreshing;
+    private bool _historyWriteErrorShown;
     private BatterySnapshot _latest = BatterySnapshot.Error("正在读取鼠标电量...");
     private BatterySnapshot? _lastReadableSnapshot;
 
@@ -38,6 +43,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         _trayIcon = LoadApplicationIcon();
         _windowIcon = (Icon)_trayIcon.Clone();
+        _historyStore = new BatteryHistoryStore(AppPaths.HistoryDatabasePath);
 
         _form = new BatteryStatusForm
         {
@@ -100,6 +106,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Opening += (_, _) => RefreshTaskbarScreenMenu();
         menu.Items.Add("显示状态", null, (_, _) => ShowStatusWindow());
+        menu.Items.Add("历史图表", null, (_, _) => ShowHistoryWindow());
         menu.Items.Add("立即刷新", null, async (_, _) => await RefreshAsync());
         menu.Items.Add(new ToolStripSeparator());
 
@@ -165,11 +172,47 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _form.UpdateSnapshot(snapshot);
             UpdateTaskbarBatterySnapshots(snapshot);
             UpdateTray(snapshot);
+            await RecordHistoryAsync(snapshot);
         }
         finally
         {
             _isRefreshing = false;
         }
+    }
+
+    private async Task RecordHistoryAsync(BatterySnapshot snapshot)
+    {
+        try
+        {
+            await Task.Run(() => _historyStore.Record(snapshot));
+        }
+        catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            if (_historyWriteErrorShown)
+            {
+                return;
+            }
+
+            _historyWriteErrorShown = true;
+            _notifyIcon.ShowBalloonTip(3000, "电量历史记录失败", ex.Message, ToolTipIcon.Warning);
+        }
+    }
+
+    private void ShowHistoryWindow()
+    {
+        if (_historyForm is { IsDisposed: false })
+        {
+            _historyForm.Activate();
+            return;
+        }
+
+        _historyForm = new BatteryHistoryForm(_historyStore)
+        {
+            Icon = _windowIcon
+        };
+        _historyForm.StartPosition = FormStartPosition.CenterScreen;
+        _historyForm.Show();
+        _historyForm.Activate();
     }
 
     private BatterySnapshot ApplySleepingMouseFallback(BatterySnapshot snapshot)
@@ -506,6 +549,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
 
         _taskbarBatteryForms.Clear();
+        _historyForm?.Dispose();
         _form.Dispose();
         _windowIcon.Dispose();
         _trayIcon.Dispose();

@@ -21,12 +21,13 @@ internal sealed class AppSettings
     {
         try
         {
-            if (!File.Exists(SettingsPath))
+            EnsureSettingsMigrated();
+            if (!File.Exists(AppPaths.SettingsPath))
             {
                 return new AppSettings();
             }
 
-            var json = File.ReadAllText(SettingsPath);
+            var json = File.ReadAllText(AppPaths.SettingsPath);
             var settings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
             settings.Normalize();
             return settings;
@@ -40,8 +41,8 @@ internal sealed class AppSettings
     public void Save()
     {
         Normalize();
-        Directory.CreateDirectory(SettingsDirectory);
-        File.WriteAllText(SettingsPath, JsonSerializer.Serialize(this, JsonOptions));
+        Directory.CreateDirectory(AppPaths.RootDirectory);
+        File.WriteAllText(AppPaths.SettingsPath, JsonSerializer.Serialize(this, JsonOptions));
     }
 
     public void SetTaskbarBatteryScreenDeviceNames(IEnumerable<string> deviceNames)
@@ -70,8 +71,14 @@ internal sealed class AppSettings
             .ToList() ?? [];
     }
 
-    private static string SettingsDirectory =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LogitechBatteryDisplay");
+    private static void EnsureSettingsMigrated()
+    {
+        if (File.Exists(AppPaths.SettingsPath) || !File.Exists(AppPaths.LegacySettingsPath))
+        {
+            return;
+        }
 
-    private static string SettingsPath => Path.Combine(SettingsDirectory, "settings.json");
+        Directory.CreateDirectory(AppPaths.RootDirectory);
+        File.Copy(AppPaths.LegacySettingsPath, AppPaths.SettingsPath, overwrite: false);
+    }
 }
