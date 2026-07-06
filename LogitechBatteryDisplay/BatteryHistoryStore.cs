@@ -10,6 +10,7 @@ internal sealed class BatteryHistoryStore
     public BatteryHistoryStore(string databasePath)
     {
         _databasePath = databasePath;
+        AppPaths.EnsureHistoryDatabaseMigrated();
         Initialize();
     }
 

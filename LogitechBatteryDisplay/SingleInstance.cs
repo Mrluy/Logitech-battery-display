@@ -4,6 +4,7 @@ internal static class SingleInstance
 {
     private const string MutexName = @"Local\LogitechBatteryDisplay.SingleInstance";
     private const string ShowWindowEventName = @"Local\LogitechBatteryDisplay.ShowWindow";
+    private const string ShowHistoryEventName = @"Local\LogitechBatteryDisplay.ShowHistory";
 
     public static Mutex CreateMutex(out bool isFirstInstance)
     {
@@ -15,11 +16,16 @@ internal static class SingleInstance
         return new EventWaitHandle(false, EventResetMode.AutoReset, ShowWindowEventName);
     }
 
-    public static void SignalExistingInstance()
+    public static EventWaitHandle CreateShowHistoryEvent()
+    {
+        return new EventWaitHandle(false, EventResetMode.AutoReset, ShowHistoryEventName);
+    }
+
+    public static void SignalExistingInstance(bool showHistory)
     {
         try
         {
-            using var showWindowEvent = EventWaitHandle.OpenExisting(ShowWindowEventName);
+            using var showWindowEvent = EventWaitHandle.OpenExisting(showHistory ? ShowHistoryEventName : ShowWindowEventName);
             showWindowEvent.Set();
         }
         catch (WaitHandleCannotBeOpenedException)

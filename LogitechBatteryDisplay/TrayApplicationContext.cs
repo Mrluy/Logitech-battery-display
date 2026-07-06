@@ -15,7 +15,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly Icon _trayIcon;
     private readonly Icon _windowIcon;
     private readonly EventWaitHandle _showWindowEvent;
+    private readonly EventWaitHandle _showHistoryEvent;
     private readonly RegisteredWaitHandle _showWindowRegistration;
+    private readonly RegisteredWaitHandle _showHistoryRegistration;
     private readonly AppSettings _settings;
     private ToolStripMenuItem? _taskbarBatteryMenuItem;
     private ToolStripMenuItem? _taskbarScreenMenuItem;
@@ -26,7 +28,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private BatterySnapshot _latest = BatterySnapshot.Error("正在读取鼠标电量...");
     private BatterySnapshot? _lastReadableSnapshot;
 
-    public TrayApplicationContext(bool showOnStart = false)
+    public TrayApplicationContext(bool showOnStart = false, bool showHistoryOnStart = false)
     {
         _settings = AppSettings.Load();
         _settings.StartWithWindows = StartupManager.IsEnabled(Application.ExecutablePath);
@@ -53,6 +55,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _form.RefreshRequested += (_, _) => _ = RefreshAsync();
 
         _showWindowEvent = SingleInstance.CreateShowWindowEvent();
+        _showHistoryEvent = SingleInstance.CreateShowHistoryEvent();
         _showWindowRegistration = ThreadPool.RegisterWaitForSingleObject(
             _showWindowEvent,
             (_, timedOut) =>
@@ -62,6 +65,24 @@ internal sealed class TrayApplicationContext : ApplicationContext
                     try
                     {
                         _form.BeginInvoke(ShowStatusWindow);
+                    }
+                    catch (InvalidOperationException)
+                    {
+                    }
+                }
+            },
+            null,
+            -1,
+            false);
+        _showHistoryRegistration = ThreadPool.RegisterWaitForSingleObject(
+            _showHistoryEvent,
+            (_, timedOut) =>
+            {
+                if (!timedOut && !_form.IsDisposed)
+                {
+                    try
+                    {
+                        _form.BeginInvoke(ShowHistoryWindow);
                     }
                     catch (InvalidOperationException)
                     {
@@ -95,9 +116,23 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _timer.Start();
 
         _ = RefreshAsync();
-        if (showOnStart)
+        if (showOnStart || showHistoryOnStart)
         {
-            ShowStatusWindow();
+            EventHandler? initialShowHandler = null;
+            initialShowHandler = (_, _) =>
+            {
+                Application.Idle -= initialShowHandler;
+                if (showOnStart)
+                {
+                    ShowStatusWindow();
+                }
+
+                if (showHistoryOnStart)
+                {
+                    ShowHistoryWindow();
+                }
+            };
+            Application.Idle += initialShowHandler;
         }
     }
 
@@ -200,19 +235,34 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void ShowHistoryWindow()
     {
-        if (_historyForm is { IsDisposed: false })
+        try
         {
-            _historyForm.Activate();
-            return;
-        }
+            if (_historyForm is { IsDisposed: false })
+            {
+                if (_historyForm.WindowState == FormWindowState.Minimized)
+                {
+                    _historyForm.WindowState = FormWindowState.Normal;
+                }
 
-        _historyForm = new BatteryHistoryForm(_historyStore)
+                _historyForm.Show();
+                _historyForm.BringToFront();
+                _historyForm.Activate();
+                return;
+            }
+
+            _historyForm = new BatteryHistoryForm(_historyStore)
+            {
+                Icon = _windowIcon
+            };
+            _historyForm.StartPosition = FormStartPosition.CenterScreen;
+            _historyForm.Show();
+            _historyForm.BringToFront();
+            _historyForm.Activate();
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or SqliteException)
         {
-            Icon = _windowIcon
-        };
-        _historyForm.StartPosition = FormStartPosition.CenterScreen;
-        _historyForm.Show();
-        _historyForm.Activate();
+            _notifyIcon.ShowBalloonTip(3000, "历史图表打开失败", ex.Message, ToolTipIcon.Warning);
+        }
     }
 
     private BatterySnapshot ApplySleepingMouseFallback(BatterySnapshot snapshot)
@@ -540,7 +590,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _timer.Stop();
         _timer.Dispose();
         _showWindowRegistration.Unregister(null);
+        _showHistoryRegistration.Unregister(null);
         _showWindowEvent.Dispose();
+        _showHistoryEvent.Dispose();
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
         foreach (var form in _taskbarBatteryForms.Values)

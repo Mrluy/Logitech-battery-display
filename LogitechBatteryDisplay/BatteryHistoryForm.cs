@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using Microsoft.Data.Sqlite;
 
 namespace LogitechBatteryDisplay;
 
@@ -10,6 +11,7 @@ internal sealed class BatteryHistoryForm : Form
     private readonly Label _summary = new();
     private readonly Label _emptyHint = new();
     private readonly BatteryHistoryChart _chart = new();
+    private int _refreshRequestId;
 
     public BatteryHistoryForm(BatteryHistoryStore historyStore)
     {
@@ -24,7 +26,7 @@ internal sealed class BatteryHistoryForm : Form
 
         ConfigureControls();
         Controls.AddRange([_range, _refresh, _summary, _emptyHint, _chart]);
-        Load += (_, _) => RefreshHistory();
+        Load += async (_, _) => await RefreshHistoryAsync();
         Resize += (_, _) => LayoutControls();
         LayoutControls();
     }
@@ -42,14 +44,14 @@ internal sealed class BatteryHistoryForm : Form
             new HistoryRangeOption("最近 7 天", TimeSpan.FromDays(7))
         ]);
         _range.SelectedIndex = 2;
-        _range.SelectedIndexChanged += (_, _) => RefreshHistory();
+        _range.SelectedIndexChanged += async (_, _) => await RefreshHistoryAsync();
 
         _refresh.Text = "刷新";
         _refresh.FlatStyle = FlatStyle.Flat;
         _refresh.BackColor = HistoryPalette.Button;
         _refresh.ForeColor = HistoryPalette.PrimaryText;
         _refresh.FlatAppearance.BorderColor = HistoryPalette.Border;
-        _refresh.Click += (_, _) => RefreshHistory();
+        _refresh.Click += async (_, _) => await RefreshHistoryAsync();
 
         _summary.AutoSize = false;
         _summary.ForeColor = HistoryPalette.SecondaryText;
@@ -74,19 +76,52 @@ internal sealed class BatteryHistoryForm : Form
         _emptyHint.Bounds = _chart.Bounds;
     }
 
-    private void RefreshHistory()
+    private async Task RefreshHistoryAsync()
     {
         if (_range.SelectedItem is not HistoryRangeOption option)
         {
             return;
         }
 
+        var requestId = ++_refreshRequestId;
         var now = DateTimeOffset.Now;
         var since = now - option.Duration;
-        var entries = _historyStore.GetEntries(since);
-        _chart.SetData(entries, since, now);
-        _emptyHint.Visible = entries.Count == 0;
-        _summary.Text = BuildSummary(entries, option, now);
+        _refresh.Enabled = false;
+        _emptyHint.Visible = false;
+        _emptyHint.Text = "暂无历史记录";
+        _summary.Text = $"{option.Label} 正在读取...";
+
+        try
+        {
+            var entries = await Task.Run(() => _historyStore.GetEntries(since));
+            if (IsDisposed || requestId != _refreshRequestId)
+            {
+                return;
+            }
+
+            _chart.SetData(entries, since, now);
+            _emptyHint.Visible = entries.Count == 0;
+            _summary.Text = BuildSummary(entries, option, now);
+        }
+        catch (Exception ex) when (ex is SqliteException or IOException or InvalidOperationException or FormatException)
+        {
+            if (IsDisposed || requestId != _refreshRequestId)
+            {
+                return;
+            }
+
+            _chart.SetData([], since, now);
+            _emptyHint.Text = "历史记录读取失败";
+            _emptyHint.Visible = true;
+            _summary.Text = ex.Message;
+        }
+        finally
+        {
+            if (!IsDisposed && requestId == _refreshRequestId)
+            {
+                _refresh.Enabled = true;
+            }
+        }
     }
 
     private static string BuildSummary(IReadOnlyList<BatteryHistoryEntry> entries, HistoryRangeOption option, DateTimeOffset now)
@@ -237,28 +272,24 @@ internal sealed class BatteryHistoryForm : Form
             };
             var step = Math.Max(1, _entries.Count / Math.Max(1, plot.Width * 2));
             using var path = new GraphicsPath();
-            var hasFigure = false;
+            PointF? lastPoint = null;
 
             for (var index = 0; index < _entries.Count; index += step)
             {
                 var entry = _entries[index];
                 if (entry.Percent is not int percent)
                 {
-                    hasFigure = false;
+                    lastPoint = null;
                     continue;
                 }
 
                 var point = new PointF(TimeToX(plot, entry.RecordedAt), PercentToY(plot, percent));
-                if (!hasFigure)
+                if (lastPoint is PointF previous)
                 {
-                    path.StartFigure();
-                    path.AddLine(point, point);
-                    hasFigure = true;
-                    continue;
+                    path.AddLine(previous, point);
                 }
 
-                var last = path.PathPoints[^1];
-                path.AddLine(last, point);
+                lastPoint = point;
             }
 
             if (path.PointCount > 1)
@@ -276,6 +307,13 @@ internal sealed class BatteryHistoryForm : Form
 
             var band = new Rectangle(plot.Left, plot.Bottom + 18, plot.Width, 16);
             using var border = new Pen(HistoryPalette.Border, 1F);
+            using var chargingBrush = new SolidBrush(HistoryPalette.Charging);
+            using var usingBrush = new SolidBrush(HistoryPalette.Using);
+            using var sleepingBrush = new SolidBrush(HistoryPalette.Sleeping);
+
+            var activeState = string.Empty;
+            var activeLeft = 0F;
+            var activeRight = 0F;
             for (var index = 0; index < _entries.Count; index++)
             {
                 var entry = _entries[index];
@@ -287,8 +325,29 @@ internal sealed class BatteryHistoryForm : Form
                     right = left + 1;
                 }
 
-                using var brush = new SolidBrush(StateColor(entry.StateGroup));
-                graphics.FillRectangle(brush, left, band.Top, right - left, band.Height);
+                if (activeState.Length == 0)
+                {
+                    activeState = entry.StateGroup;
+                    activeLeft = left;
+                    activeRight = right;
+                    continue;
+                }
+
+                if (entry.StateGroup == activeState && left <= activeRight + 0.5F)
+                {
+                    activeRight = Math.Max(activeRight, right);
+                    continue;
+                }
+
+                FillStateSegment(graphics, band, BrushFor(activeState, chargingBrush, usingBrush, sleepingBrush), activeLeft, activeRight);
+                activeState = entry.StateGroup;
+                activeLeft = left;
+                activeRight = right;
+            }
+
+            if (activeState.Length > 0)
+            {
+                FillStateSegment(graphics, band, BrushFor(activeState, chargingBrush, usingBrush, sleepingBrush), activeLeft, activeRight);
             }
 
             graphics.DrawRectangle(border, band);
@@ -341,12 +400,22 @@ internal sealed class BatteryHistoryForm : Form
             return plot.Bottom - (plot.Height * value / 100F);
         }
 
-        private static Color StateColor(string stateGroup) =>
+        private static void FillStateSegment(Graphics graphics, Rectangle band, Brush brush, float left, float right)
+        {
+            if (right <= left)
+            {
+                right = left + 1;
+            }
+
+            graphics.FillRectangle(brush, left, band.Top, right - left, band.Height);
+        }
+
+        private static Brush BrushFor(string stateGroup, Brush chargingBrush, Brush usingBrush, Brush sleepingBrush) =>
             stateGroup switch
             {
-                BatteryHistoryStateGroups.Charging => HistoryPalette.Charging,
-                BatteryHistoryStateGroups.Sleeping => HistoryPalette.Sleeping,
-                _ => HistoryPalette.Using
+                BatteryHistoryStateGroups.Charging => chargingBrush,
+                BatteryHistoryStateGroups.Sleeping => sleepingBrush,
+                _ => usingBrush
             };
     }
 

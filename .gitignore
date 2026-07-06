@@ -8,6 +8,8 @@
 /Logitech-battery-display.zip
 **/probe-result.txt
 /settings.json
+/battery-history.db
+/battery-history.db-*
 /battery-history.sqlite
 /battery-history.sqlite-*
 

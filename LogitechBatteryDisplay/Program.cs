@@ -12,14 +12,18 @@ static class Program
         }
 
         ApplicationConfiguration.Initialize();
+        var showHistoryOnStart = args.Any(arg =>
+            arg.Equals("--history", StringComparison.OrdinalIgnoreCase) ||
+            arg.Equals("--show-history", StringComparison.OrdinalIgnoreCase));
+        var showStatusOnStart = args.Any(arg => arg.Equals("--show", StringComparison.OrdinalIgnoreCase));
 
         using var instanceMutex = SingleInstance.CreateMutex(out var isFirstInstance);
         if (!isFirstInstance)
         {
-            SingleInstance.SignalExistingInstance();
+            SingleInstance.SignalExistingInstance(showHistoryOnStart);
             return;
         }
 
-        Application.Run(new TrayApplicationContext(args.Any(arg => arg.Equals("--show", StringComparison.OrdinalIgnoreCase))));
+        Application.Run(new TrayApplicationContext(showStatusOnStart, showHistoryOnStart));
     }
 }
