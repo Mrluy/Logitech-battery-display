@@ -3,77 +3,102 @@ using Microsoft.Data.Sqlite;
 
 namespace LogitechBatteryDisplay;
 
-internal sealed class BatteryHistoryStore
+internal sealed class BatteryHistoryStore : IDisposable
 {
     private readonly string _databasePath;
+    private readonly object _sync = new();
+    private readonly SqliteConnection _connection;
 
     public BatteryHistoryStore(string databasePath)
     {
         _databasePath = databasePath;
         AppPaths.EnsureHistoryDatabaseMigrated();
-        Initialize();
+        _connection = OpenConnection();
+        ConfigureConnection(_connection);
+        Initialize(_connection);
     }
 
     public void Record(BatterySnapshot snapshot)
     {
-        using var connection = OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            INSERT INTO battery_history
-                (recorded_at, percent, charge_state, state_group, is_success, device_name, receiver_path, source, message)
-            VALUES
-                ($recorded_at, $percent, $charge_state, $state_group, $is_success, $device_name, $receiver_path, $source, $message);
-            """;
-        command.Parameters.AddWithValue("$recorded_at", DateTimeOffset.Now.ToString("O", CultureInfo.InvariantCulture));
-        command.Parameters.AddWithValue("$percent", snapshot.Percent is int percent ? percent : DBNull.Value);
-        command.Parameters.AddWithValue("$charge_state", snapshot.ChargeState.ToString());
-        command.Parameters.AddWithValue("$state_group", Classify(snapshot));
-        command.Parameters.AddWithValue("$is_success", snapshot.IsSuccess ? 1 : 0);
-        command.Parameters.AddWithValue("$device_name", snapshot.DeviceName);
-        command.Parameters.AddWithValue("$receiver_path", snapshot.ReceiverPath);
-        command.Parameters.AddWithValue("$source", snapshot.Source);
-        command.Parameters.AddWithValue("$message", snapshot.Message);
-        command.ExecuteNonQuery();
+        lock (_sync)
+        {
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO battery_history
+                    (recorded_at, percent, charge_state, state_group, is_success, device_name, receiver_path, source, message)
+                VALUES
+                    ($recorded_at, $percent, $charge_state, $state_group, $is_success, $device_name, $receiver_path, $source, $message);
+                """;
+            command.Parameters.AddWithValue("$recorded_at", DateTimeOffset.Now.ToString("O", CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("$percent", snapshot.Percent is int percent ? percent : DBNull.Value);
+            command.Parameters.AddWithValue("$charge_state", snapshot.ChargeState.ToString());
+            command.Parameters.AddWithValue("$state_group", Classify(snapshot));
+            command.Parameters.AddWithValue("$is_success", snapshot.IsSuccess ? 1 : 0);
+            command.Parameters.AddWithValue("$device_name", snapshot.DeviceName);
+            command.Parameters.AddWithValue("$receiver_path", snapshot.ReceiverPath);
+            command.Parameters.AddWithValue("$source", snapshot.Source);
+            command.Parameters.AddWithValue("$message", snapshot.Message);
+            command.ExecuteNonQuery();
+        }
     }
 
     public IReadOnlyList<BatteryHistoryEntry> GetEntries(DateTimeOffset since)
     {
         var entries = new List<BatteryHistoryEntry>();
-        using var connection = OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT recorded_at, percent, charge_state, state_group, is_success, device_name, message
-            FROM battery_history
-            WHERE recorded_at >= $since
-            ORDER BY recorded_at ASC;
-            """;
-        command.Parameters.AddWithValue("$since", since.ToString("O", CultureInfo.InvariantCulture));
-
-        using var reader = command.ExecuteReader();
-        while (reader.Read())
+        lock (_sync)
         {
-            var recordedAt = DateTimeOffset.Parse(reader.GetString(0), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
-            int? percent = reader.IsDBNull(1) ? null : reader.GetInt32(1);
-            var chargeState = Enum.TryParse<BatteryChargeState>(reader.GetString(2), out var parsedState)
-                ? parsedState
-                : BatteryChargeState.Unknown;
-            entries.Add(new BatteryHistoryEntry(
-                recordedAt,
-                percent,
-                chargeState,
-                reader.GetString(3),
-                reader.GetInt32(4) != 0,
-                reader.GetString(5),
-                reader.GetString(6)));
+            using var command = _connection.CreateCommand();
+            command.CommandText = """
+                SELECT recorded_at, percent, charge_state, state_group, is_success, device_name, message
+                FROM battery_history
+                WHERE recorded_at >= $since
+                ORDER BY recorded_at ASC;
+                """;
+            command.Parameters.AddWithValue("$since", since.ToString("O", CultureInfo.InvariantCulture));
+
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var recordedAt = DateTimeOffset.Parse(reader.GetString(0), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+                int? percent = reader.IsDBNull(1) ? null : reader.GetInt32(1);
+                var chargeState = Enum.TryParse<BatteryChargeState>(reader.GetString(2), out var parsedState)
+                    ? parsedState
+                    : BatteryChargeState.Unknown;
+                entries.Add(new BatteryHistoryEntry(
+                    recordedAt,
+                    percent,
+                    chargeState,
+                    reader.GetString(3),
+                    reader.GetInt32(4) != 0,
+                    reader.GetString(5),
+                    reader.GetString(6)));
+            }
         }
 
         return entries;
     }
 
-    private void Initialize()
+    public void Dispose()
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(_databasePath) ?? AppPaths.RootDirectory);
-        using var connection = OpenConnection();
+        lock (_sync)
+        {
+            _connection.Dispose();
+        }
+    }
+
+    private static void ConfigureConnection(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            PRAGMA journal_mode=WAL;
+            PRAGMA synchronous=NORMAL;
+            PRAGMA busy_timeout=5000;
+            """;
+        command.ExecuteNonQuery();
+    }
+
+    private static void Initialize(SqliteConnection connection)
+    {
         using var command = connection.CreateCommand();
         command.CommandText = """
             CREATE TABLE IF NOT EXISTS battery_history (
@@ -100,6 +125,7 @@ internal sealed class BatteryHistoryStore
 
     private SqliteConnection OpenConnection()
     {
+        Directory.CreateDirectory(Path.GetDirectoryName(_databasePath) ?? AppPaths.RootDirectory);
         var connection = new SqliteConnection(new SqliteConnectionStringBuilder
         {
             DataSource = _databasePath,

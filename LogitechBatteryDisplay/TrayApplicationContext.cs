@@ -602,6 +602,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         _taskbarBatteryForms.Clear();
         _historyForm?.Dispose();
+        _historyStore.Dispose();
         _form.Dispose();
         _windowIcon.Dispose();
         _trayIcon.Dispose();
