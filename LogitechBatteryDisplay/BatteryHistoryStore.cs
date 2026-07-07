@@ -42,7 +42,7 @@ internal sealed class BatteryHistoryStore : IDisposable
         }
     }
 
-    public IReadOnlyList<BatteryHistoryEntry> GetEntries(DateTimeOffset since)
+    public IReadOnlyList<BatteryHistoryEntry> GetEntries(DateTimeOffset since, DateTimeOffset until)
     {
         var entries = new List<BatteryHistoryEntry>();
         lock (_sync)
@@ -51,10 +51,11 @@ internal sealed class BatteryHistoryStore : IDisposable
             command.CommandText = """
                 SELECT recorded_at, percent, charge_state, state_group, is_success, device_name, message
                 FROM battery_history
-                WHERE recorded_at >= $since
+                WHERE recorded_at >= $since AND recorded_at <= $until
                 ORDER BY recorded_at ASC;
                 """;
             command.Parameters.AddWithValue("$since", since.ToString("O", CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("$until", until.ToString("O", CultureInfo.InvariantCulture));
 
             using var reader = command.ExecuteReader();
             while (reader.Read())

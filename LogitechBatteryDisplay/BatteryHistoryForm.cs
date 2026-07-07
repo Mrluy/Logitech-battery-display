@@ -7,6 +7,9 @@ internal sealed class BatteryHistoryForm : Form
 {
     private readonly BatteryHistoryStore _historyStore;
     private readonly ComboBox _range = new();
+    private readonly DateTimePicker _customStart = new();
+    private readonly Label _customRangeSeparator = new();
+    private readonly DateTimePicker _customEnd = new();
     private readonly Button _refresh = new();
     private readonly Label _summary = new();
     private readonly Label _emptyHint = new();
@@ -25,7 +28,7 @@ internal sealed class BatteryHistoryForm : Form
         Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
 
         ConfigureControls();
-        Controls.AddRange([_range, _refresh, _summary, _emptyHint, _chart]);
+        Controls.AddRange([_range, _customStart, _customRangeSeparator, _customEnd, _refresh, _summary, _emptyHint, _chart]);
         Load += async (_, _) => await RefreshHistoryAsync();
         Resize += (_, _) => LayoutControls();
         LayoutControls();
@@ -39,12 +42,31 @@ internal sealed class BatteryHistoryForm : Form
         _range.ForeColor = HistoryPalette.PrimaryText;
         _range.Items.AddRange([
             new HistoryRangeOption("最近 1 小时", TimeSpan.FromHours(1)),
+            new HistoryRangeOption("最近 2 小时", TimeSpan.FromHours(2)),
+            new HistoryRangeOption("最近 4 小时", TimeSpan.FromHours(4)),
             new HistoryRangeOption("最近 6 小时", TimeSpan.FromHours(6)),
+            new HistoryRangeOption("最近 12 小时", TimeSpan.FromHours(12)),
             new HistoryRangeOption("最近 24 小时", TimeSpan.FromHours(24)),
-            new HistoryRangeOption("最近 7 天", TimeSpan.FromDays(7))
+            new HistoryRangeOption("最近 7 天", TimeSpan.FromDays(7)),
+            new HistoryRangeOption("自定义范围", null)
         ]);
-        _range.SelectedIndex = 2;
-        _range.SelectedIndexChanged += async (_, _) => await RefreshHistoryAsync();
+        _range.SelectedIndex = 5;
+        _range.SelectedIndexChanged += async (_, _) =>
+        {
+            LayoutControls();
+            await RefreshHistoryAsync();
+        };
+
+        var now = DateTime.Now;
+        ConfigureCustomDateTimePicker(_customStart, now.AddHours(-24));
+        ConfigureCustomDateTimePicker(_customEnd, now);
+        _customStart.ValueChanged += async (_, _) => await RefreshCustomRangeAsync();
+        _customEnd.ValueChanged += async (_, _) => await RefreshCustomRangeAsync();
+
+        _customRangeSeparator.AutoSize = false;
+        _customRangeSeparator.ForeColor = HistoryPalette.SecondaryText;
+        _customRangeSeparator.TextAlign = ContentAlignment.MiddleCenter;
+        _customRangeSeparator.Text = "至";
 
         _refresh.Text = "刷新";
         _refresh.FlatStyle = FlatStyle.Flat;
@@ -69,8 +91,22 @@ internal sealed class BatteryHistoryForm : Form
     private void LayoutControls()
     {
         const int margin = 18;
+        var isCustom = IsCustomRangeSelected();
         _range.SetBounds(margin, margin, 132, 30);
-        _refresh.SetBounds(_range.Right + 10, margin, 76, 30);
+
+        var nextX = _range.Right + 10;
+        _customStart.Visible = isCustom;
+        _customRangeSeparator.Visible = isCustom;
+        _customEnd.Visible = isCustom;
+        if (isCustom)
+        {
+            _customStart.SetBounds(nextX, margin, 164, 30);
+            _customRangeSeparator.SetBounds(_customStart.Right + 6, margin, 18, 30);
+            _customEnd.SetBounds(_customRangeSeparator.Right + 6, margin, 164, 30);
+            nextX = _customEnd.Right + 10;
+        }
+
+        _refresh.SetBounds(nextX, margin, 76, 30);
         _summary.SetBounds(_refresh.Right + 14, margin, Math.Max(80, ClientSize.Width - _refresh.Right - margin - 14), 30);
         _chart.SetBounds(margin, 64, Math.Max(200, ClientSize.Width - margin * 2), Math.Max(220, ClientSize.Height - 82));
         _emptyHint.Bounds = _chart.Bounds;
@@ -85,7 +121,16 @@ internal sealed class BatteryHistoryForm : Form
 
         var requestId = ++_refreshRequestId;
         var now = DateTimeOffset.Now;
-        var since = now - option.Duration;
+        if (!TryGetSelectedRange(option, now, out var since, out var until, out var rangeError))
+        {
+            _chart.SetData([], now, now);
+            _emptyHint.Text = rangeError;
+            _emptyHint.Visible = true;
+            _summary.Text = rangeError;
+            _refresh.Enabled = true;
+            return;
+        }
+
         _refresh.Enabled = false;
         _emptyHint.Visible = false;
         _emptyHint.Text = "暂无历史记录";
@@ -93,15 +138,15 @@ internal sealed class BatteryHistoryForm : Form
 
         try
         {
-            var entries = await Task.Run(() => _historyStore.GetEntries(since));
+            var entries = await Task.Run(() => _historyStore.GetEntries(since, until));
             if (IsDisposed || requestId != _refreshRequestId)
             {
                 return;
             }
 
-            _chart.SetData(entries, since, now);
+            _chart.SetData(entries, since, until);
             _emptyHint.Visible = entries.Count == 0;
-            _summary.Text = BuildSummary(entries, option, now);
+            _summary.Text = BuildSummary(entries, option.Label, until);
         }
         catch (Exception ex) when (ex is SqliteException or IOException or InvalidOperationException or FormatException)
         {
@@ -124,14 +169,14 @@ internal sealed class BatteryHistoryForm : Form
         }
     }
 
-    private static string BuildSummary(IReadOnlyList<BatteryHistoryEntry> entries, HistoryRangeOption option, DateTimeOffset now)
+    private static string BuildSummary(IReadOnlyList<BatteryHistoryEntry> entries, string rangeLabel, DateTimeOffset until)
     {
         if (entries.Count == 0)
         {
-            return $"{option.Label} 没有记录";
+            return $"{rangeLabel} 没有记录";
         }
 
-        var durations = EstimateDurations(entries, now);
+        var durations = EstimateDurations(entries, until);
         var latest = entries[^1];
         var latestPercent = latest.Percent is int percent ? $"{percent}%" : "未知";
         return $"最新 {latestPercent} · 充电 {FormatDuration(durations.Charging)} · 使用 {FormatDuration(durations.Using)} · 休眠 {FormatDuration(durations.Sleeping)}";
@@ -189,8 +234,55 @@ internal sealed class BatteryHistoryForm : Form
         return $"{Math.Max(0, (int)value.TotalSeconds)}秒";
     }
 
-    private sealed record HistoryRangeOption(string Label, TimeSpan Duration)
+    private async Task RefreshCustomRangeAsync()
     {
+        if (IsCustomRangeSelected())
+        {
+            await RefreshHistoryAsync();
+        }
+    }
+
+    private bool TryGetSelectedRange(
+        HistoryRangeOption option,
+        DateTimeOffset now,
+        out DateTimeOffset since,
+        out DateTimeOffset until,
+        out string rangeError)
+    {
+        rangeError = string.Empty;
+        if (!option.IsCustom)
+        {
+            until = now;
+            since = now - option.Duration!.Value;
+            return true;
+        }
+
+        since = new DateTimeOffset(_customStart.Value);
+        until = new DateTimeOffset(_customEnd.Value);
+        if (until > since)
+        {
+            return true;
+        }
+
+        rangeError = "结束时间必须晚于开始时间";
+        return false;
+    }
+
+    private bool IsCustomRangeSelected() =>
+        _range.SelectedItem is HistoryRangeOption { IsCustom: true };
+
+    private static void ConfigureCustomDateTimePicker(DateTimePicker picker, DateTime value)
+    {
+        picker.Format = DateTimePickerFormat.Custom;
+        picker.CustomFormat = "yyyy-MM-dd HH:mm:ss";
+        picker.Value = value;
+        picker.Visible = false;
+    }
+
+    private sealed record HistoryRangeOption(string Label, TimeSpan? Duration)
+    {
+        public bool IsCustom => Duration is null;
+
         public override string ToString() => Label;
     }
 
