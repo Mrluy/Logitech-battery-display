@@ -628,7 +628,7 @@ internal sealed class BatteryHistoryForm : Form
             };
 
         private static Pen CreateLinePen(Color color) =>
-            new(color, 1.1F)
+            new(color, 0.55F)
             {
                 LineJoin = LineJoin.Round,
                 StartCap = LineCap.Round,
