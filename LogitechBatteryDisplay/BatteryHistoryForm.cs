@@ -503,16 +503,30 @@ internal sealed class BatteryHistoryForm : Form
 
         private void DrawLegend(Graphics graphics)
         {
-            DrawLegendItem(graphics, 58, 2, HistoryPalette.Charging, "充电");
-            DrawLegendItem(graphics, 128, 2, HistoryPalette.Using, "使用");
-            DrawLegendItem(graphics, 198, 2, HistoryPalette.Sleeping, "休眠/离线");
+            var x = 58;
+            x = DrawLegendItem(graphics, x, 2, HistoryPalette.Charging, "充电");
+            x = DrawLegendItem(graphics, x, 2, HistoryPalette.Using, "使用");
+            DrawLegendItem(graphics, x, 2, HistoryPalette.Sleeping, "休眠/离线");
         }
 
-        private void DrawLegendItem(Graphics graphics, int x, int y, Color color, string text)
+        private int DrawLegendItem(Graphics graphics, int x, int y, Color color, string text)
         {
+            const int swatchWidth = 12;
+            const int swatchTextGap = 6;
+            const int itemGap = 28;
             using var brush = new SolidBrush(color);
-            graphics.FillRectangle(brush, x, y + 6, 12, 8);
-            TextRenderer.DrawText(graphics, text, Font, new Rectangle(x + 18, y, 82, 22), HistoryPalette.SecondaryText);
+            graphics.FillRectangle(brush, x, y + 6, swatchWidth, 8);
+
+            var textSize = TextRenderer.MeasureText(graphics, text, Font, Size.Empty, TextFormatFlags.NoPadding);
+            var textBounds = new Rectangle(x + swatchWidth + swatchTextGap, y, textSize.Width, 22);
+            TextRenderer.DrawText(
+                graphics,
+                text,
+                Font,
+                textBounds,
+                HistoryPalette.SecondaryText,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            return textBounds.Right + itemGap;
         }
 
         private float TimeToX(Rectangle plot, DateTimeOffset time)
